@@ -90,6 +90,46 @@ def test_unknown_provider_is_rejected():
         explainer.build_model(provider="openai")
 
 
+def test_every_documented_provider_builds_without_calling_it():
+    """Construction only. No request, so no key is needed."""
+    from agno.models.google import Gemini
+    from agno.models.groq import Groq
+    from agno.models.ollama import Ollama
+
+    assert isinstance(explainer.build_model("ollama", "ministral-3:3b"), Ollama)
+    assert isinstance(explainer.build_model("groq", "openai/gpt-oss-20b"), Groq)
+    assert isinstance(explainer.build_model("gemini", "gemini-3.8-flash"), Gemini)
+
+
+def test_groq_is_the_selected_default():
+    assert explainer.DEFAULT_PROVIDER == "groq"
+    assert explainer.DEFAULT_MODEL == "openai/gpt-oss-20b"
+
+
+def test_provider_error_document_is_surfaced_as_provider_error():
+    """A provider outage must not be reported as a confusing schema failure."""
+    payload = '{"error": {"code": 503, "message": "high demand", "status": "UNAVAILABLE"}}'
+
+    with pytest.raises(explainer.ProviderError, match="UNAVAILABLE"):
+        explainer.parse_explanation(payload, provider="gemini")
+
+
+def test_non_error_payload_is_still_validated():
+    payload = '{"summary": "ok", "explanations": ["R001: x"], "recommendations": [], "limitations": []}'
+
+    result = explainer.parse_explanation(payload, provider="groq")
+
+    assert result.summary == "ok"
+
+
+def test_already_parsed_content_passes_through():
+    explanation = ExplanationResult(
+        summary="s", explanations=["R001: x"], recommendations=[], limitations=[]
+    )
+
+    assert explainer.parse_explanation(explanation) is explanation
+
+
 def test_explanation_schema_carries_no_version_or_severity_fields():
     fields = set(ExplanationResult.model_fields)
 

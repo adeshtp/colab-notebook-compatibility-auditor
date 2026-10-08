@@ -1,0 +1,163 @@
+{
+  "provider": "groq",
+  "model": "openai/gpt-oss-20b",
+  "generated_by": "scripts/compare_providers.py",
+  "cases": [
+    {
+      "case": "A_mismatching_pin",
+      "notebook": "tests/fixtures/mismatching_pin.ipynb",
+      "snapshot": "2026.07",
+      "deterministic_status": "HIGH_RISK",
+      "findings": [
+        {
+          "rule": "R001",
+          "package": "numpy",
+          "severity": "HIGH",
+          "cell": 0
+        }
+      ],
+      "distinct_rules": [
+        "R001"
+      ],
+      "evidence_hits": {
+        "R001": 3
+      },
+      "prompt_chars": 2202,
+      "requests": 1,
+      "success": true,
+      "latency_seconds": 1.67,
+      "structured_output_ok": true,
+      "unexplained_rules": [],
+      "coverage_ok": true,
+      "reproduction": {
+        "rule_ids_reproduced": true,
+        "missing_rule_ids": [],
+        "supplied_versions": [
+          "1.24.3",
+          "2.0.2",
+          "2.2.2"
+        ],
+        "missing_versions": [
+          "2.2.2"
+        ],
+        "versions_not_supplied": [
+          "2.0"
+        ]
+      },
+      "evidence": {
+        "sources_available": [
+          "colab-runtime-version-faq"
+        ],
+        "mentions_uncertainty": true,
+        "snapshots_in_evidence": [
+          "2025.07",
+          "2025.10",
+          "2026.01",
+          "2026.04",
+          "2026.07"
+        ],
+        "snapshots_mentioned": [
+          "2026.07"
+        ],
+        "speculative_snapshots": []
+      },
+      "overreach_flags": [],
+      "n_recommendations": 3,
+      "n_limitations": 3,
+      "output": {
+        "summary": "The notebook pins numpy==1.24.3, while the 2026.07 runtime includes numpy 2.0.2. This mismatch is flagged as high risk.",
+        "explanations": [
+          "R001: The notebook pins numpy==1.24.3, but the selected runtime contains numpy 2.0.2, which may cause incompatibility."
+        ],
+        "recommendations": [
+          "Run `import numpy; print(numpy.__version__)` to confirm the runtime version.",
+          "Check if the notebook uses any numpy features removed or changed in 2.0.",
+          "Verify that the code runs without errors after installing the pinned numpy version."
+        ],
+        "limitations": [
+          "It cannot confirm whether the notebook code actually uses incompatible numpy functions.",
+          "It cannot determine if runtime will raise import errors during execution.",
+          "It cannot assess the runtime behavior after installing the pinned version."
+        ]
+      }
+    },
+    {
+      "case": "B_unpinned_and_absent",
+      "notebook": "tests/fixtures/unpinned_package.ipynb",
+      "snapshot": "2026.07",
+      "deterministic_status": "ATTENTION",
+      "findings": [
+        {
+          "rule": "R002",
+          "package": "opendatasets",
+          "severity": "ATTENTION",
+          "cell": 0
+        },
+        {
+          "rule": "R004",
+          "package": "opendatasets",
+          "severity": "UNKNOWN",
+          "cell": 0
+        }
+      ],
+      "distinct_rules": [
+        "R002",
+        "R004"
+      ],
+      "evidence_hits": {
+        "R002": 3,
+        "R004": 3
+      },
+      "prompt_chars": 3862,
+      "requests": 1,
+      "success": true,
+      "latency_seconds": 1.44,
+      "structured_output_ok": true,
+      "unexplained_rules": [],
+      "coverage_ok": true,
+      "reproduction": {
+        "rule_ids_reproduced": true,
+        "missing_rule_ids": [],
+        "supplied_versions": [],
+        "missing_versions": [],
+        "versions_not_supplied": []
+      },
+      "evidence": {
+        "sources_available": [
+          "colab-backend-info-readme",
+          "colab-backend-info-transparency",
+          "colab-runtime-version-faq"
+        ],
+        "mentions_uncertainty": true,
+        "snapshots_in_evidence": [
+          "2026.04",
+          "2026.07"
+        ],
+        "snapshots_mentioned": [
+          "2026.07"
+        ],
+        "speculative_snapshots": []
+      },
+      "overreach_flags": [],
+      "n_recommendations": 3,
+      "n_limitations": 3,
+      "output": {
+        "summary": "The notebook installs the opendatasets package without pinning a version, and the selected 2026.07 snapshot does not list that package. This creates uncertainty about which version will be used and whether the package is pre\u2011installed.",
+        "explanations": [
+          "R002 Notebook installs opendatasets without a pinned version; the runtime may resolve to different opendatasets releases, so stability is not guaranteed.",
+          "R004 The selected 2026.07 snapshot does not list opendatasets, so the notebook might need to install it at runtime, but its presence in the live runtime cannot be confirmed from the snapshot alone."
+        ],
+        "recommendations": [
+          "Check the output of `pip freeze` for opendatasets after the notebook starts.",
+          "Run `import opendatasets` to confirm the package imports correctly.",
+          "Verify the installed opendatasets version with `opendatasets.__version__`."
+        ],
+        "limitations": [
+          "Static analysis cannot confirm if opendatasets is pre\u2011installed in the live runtime.",
+          "It cannot determine the exact version that will be installed at runtime.",
+          "It cannot guarantee that the snapshot\u2019s package list reflects the live runtime due to potential update delays."
+        ]
+      }
+    }
+  ]
+}

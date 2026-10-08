@@ -4,9 +4,12 @@ The model explains. It never decides. Rule, package, severity, status, message a
 cell all come from the deterministic stage and are passed through untouched.
 """
 
+import json
 import os
 
 from agno.agent import Agent
+from agno.models.google import Gemini
+from agno.models.groq import Groq
 from agno.models.ollama import Ollama
 from agno.models.openrouter import OpenRouter
 from pydantic import BaseModel, Field
@@ -14,14 +17,21 @@ from pydantic import BaseModel, Field
 from models import AuditResult, Finding
 
 # One audit, one explanation call. No teams, no tool loops, no per-finding calls.
-DEFAULT_MODEL = os.getenv("COLABAUDIT_LLM_MODEL", "ministral-3:3b")
-DEFAULT_PROVIDER = os.getenv("COLABAUDIT_LLM_PROVIDER", "ollama")
+# Defaults chosen by measured comparison in scripts/compare_providers.py, see
+# AI_PROVIDER.md. Groq was fastest and the only provider to explain every supplied
+# rule. Ollama stays available as an offline local mode.
+DEFAULT_PROVIDER = os.getenv("COLABAUDIT_LLM_PROVIDER", "groq")
+DEFAULT_MODEL = os.getenv("COLABAUDIT_LLM_MODEL", "openai/gpt-oss-20b")
 DEFAULT_HOST = os.getenv("COLABAUDIT_OLLAMA_HOST", "http://localhost:11434")
 
 # A 3B model on CPU will happily ramble for thousands of tokens and get cut off
 # mid-JSON, which fails schema validation. Capping generation keeps one call short
 # and the output parseable.
 MAX_TOKENS = 700
+
+class ProviderError(Exception):
+    """A provider returned an error document instead of an explanation."""
+
 
 SYSTEM_PROMPT = """You explain compatibility risks in an old Google Colab notebook.
 
@@ -66,12 +76,21 @@ class ExplanationResult(BaseModel):
 
 
 def build_model(provider: str = DEFAULT_PROVIDER, model: str = DEFAULT_MODEL):
-    """Return the configured model. Ollama is the default and needs no API key."""
+    """Return the configured model.
+
+    Plain configuration-driven selection. Ollama is the local default and needs no
+    API key. Groq and Gemini are hosted alternatives that read their key from the
+    environment. Unknown provider names are rejected rather than guessed at.
+    """
     if provider == "ollama":
         return Ollama(id=model, host=DEFAULT_HOST, options={"num_predict": MAX_TOKENS})
+    if provider == "groq":
+        return Groq(id=model)
+    if provider == "gemini":
+        return Gemini(id=model)
     if provider == "openrouter":
         return OpenRouter(id=model)
-    raise ValueError(f"Unknown provider: {provider}. Use 'ollama' or 'openrouter'.")
+    raise ValueError(f"Unknown provider: {provider}")
 
 
 def build_query_for(finding: Finding) -> str:
@@ -181,7 +200,12 @@ def explain(
     provider: str = DEFAULT_PROVIDER,
     model: str = DEFAULT_MODEL,
 ) -> ExplanationResult:
-    """Make exactly one local model call to explain an existing audit result."""
+    """Make exactly one model call to explain an existing audit result.
+
+    A provider outage can reach us as an error document in the response body rather
+    than as an exception. That is reported as a ProviderError so the caller records
+    a real reason instead of a confusing schema error.
+    """
     agent = Agent(
         model=build_model(provider, model),
         description="You explain Colab notebook compatibility findings.",
@@ -192,10 +216,32 @@ def explain(
 
     response = agent.run(build_prompt(result, evidence))
 
-    if isinstance(response.content, ExplanationResult):
-        return response.content
+    return parse_explanation(response.content, provider)
 
-    return ExplanationResult.model_validate(response.content)
+
+def parse_explanation(content, provider: str = DEFAULT_PROVIDER) -> ExplanationResult:
+    """Turn an agent response into an ExplanationResult.
+
+    A provider outage can arrive as an error document in the response body rather
+    than as an exception. That is raised as ProviderError so the caller records a
+    real reason instead of a confusing schema-validation failure.
+    """
+    if isinstance(content, ExplanationResult):
+        return content
+
+    payload = content
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            payload = None
+
+    if isinstance(payload, dict) and "error" in payload:
+        raise ProviderError(
+            f"{provider} returned an error: {json.dumps(payload['error'])[:300]}"
+        )
+
+    return ExplanationResult.model_validate(payload)
 
 
 def unexplained_rules(result: AuditResult, explanation: ExplanationResult) -> list[str]:
@@ -243,6 +289,6 @@ def run_explanation(
     try:
         return result, evidence, explain(result, evidence)
     except Exception:
-        # Recorded by the caller from llm_status. No provider switching, no
-        # architecture change, no paid fallback.
+        # Includes ProviderError. Recorded by the caller as llm_status. No provider
+        # switching, no architecture change, no paid fallback.
         return result, evidence, None

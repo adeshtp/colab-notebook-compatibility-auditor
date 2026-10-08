@@ -4,7 +4,9 @@ Session handoff. Read this first, then the governance documents.
 
 ## Current state
 
-Session 3 (RAG + Agno Explanation Layer) is complete. 53 tests passing, no LLM key required.
+Provider evaluation is complete. **Groq `openai/gpt-oss-20b` is now the default
+provider**, selected by measurement. Ollama remains an offline option. 57 tests passing;
+the deterministic audit still needs no key.
 
 The whole pipeline is one call:
 
@@ -12,6 +14,100 @@ The whole pipeline is one call:
 from explainer import run_explanation
 result, evidence, explanation = run_explanation("notebook.ipynb", "2026.07")
 ```
+
+## Provider evaluation session (2026-10-08)
+
+Purpose: pick the best-fit provider, measured rather than assumed. Baseline problems
+were 53 s per call, a hot machine, and a 3B model that left R004 unexplained.
+
+### Method
+
+`scripts/compare_providers.py`. Same two fixtures, same findings, same retrieved
+evidence, same system prompt, same `ExplanationResult` schema. Only the model changed.
+**Two requests per provider, four in total.** Raw records committed under
+`reports/provider_eval_*.json`.
+
+Case A = `mismatching_pin.ipynb` vs `2026.07` (R001, numpy, 1.24.3 vs 2.0.2).
+Case B = `unpinned_package.ipynb` vs `2026.07` (R002 + R004), the case the local model
+had already failed.
+
+### Measured results
+
+| Dimension | Ollama `ministral-3:3b` | **Groq `openai/gpt-oss-20b`** | Gemini `gemini-3.8-flash` |
+|---|---|---|---|
+| Case A latency | 52.97 s | **1.67 s** | 15.51 s |
+| Case B latency | 52.32 s | **1.44 s** | failed, 3.92 s |
+| Requests succeeded | 2 / 2 | **2 / 2** | 1 / 2 |
+| Structured output valid | yes | **yes** | yes on the one success |
+| Case B R002 + R004 coverage | **R004 missing** | **both explained** | not measured |
+| Versions reproduced exactly | yes | **yes** | **no, all three omitted** |
+| Rule ids reproduced exactly | yes | **yes** | yes |
+| Signalled uncertainty | yes | **yes** | no |
+| Overreach phrases | none | **none** | none |
+| Speculative snapshot mentions | none | **none** | none |
+| Agno native structured output | `True` | `False` | `True` |
+| Local hardware | sustained CPU | none | none |
+| API key needed | no | yes | yes |
+
+**Decision: Groq.** It was fastest by roughly 30x, and the only provider to explain
+every supplied rule on the case the local model had been failing. Gemini lost on a
+`503 high demand` failure and on abstracting away every concrete version. Full
+reasoning, caveats and the deployment assessment are in `AI_PROVIDER.md`.
+
+### This does not claim statistical superiority
+
+Two cases per provider is an engineering selection, not a benchmark. No accuracy
+percentage, win rate or significance claim is made anywhere.
+
+### Defects found and fixed while evaluating
+
+1. **Gemini `503` surfaced as a `ValidationError`.** A provider outage arrives as an
+   error document in the response body, and it was being fed to
+   `ExplanationResult.model_validate`. Added `explainer.ProviderError` and
+   `parse_explanation` so the real reason is reported. Found during this evaluation, not
+   theoretical.
+2. **Two bugs in the measurement harness itself.** Runtime versions were read only from
+   `dependencies`, so legitimate quotes of `2.0.2` were scored as invented; and the
+   overreach pattern flagged "not guaranteed", which is correct hedging. Both fixed and
+   the harness self-tested against known inputs.
+
+### Infrastructure notes found
+
+- Groq returns Cloudflare `error code: 1010` to a bare Python `urllib` request.
+  Agno's client sends a normal User-Agent and is unaffected. Anyone testing with
+  `curl` or `urllib` directly will hit this.
+- Agno's `Gemini` class reads only `GOOGLE_API_KEY` and logs a false
+  `GOOGLE_API_KEY not set` error when only `GEMINI_API_KEY` is set, even though the
+  underlying SDK falls back and the call succeeds.
+
+### Files changed this session
+
+```
+src/explainer.py            groq + gemini branches, ProviderError, parse_explanation,
+                            default provider switched to groq
+tests/test_explainer.py     provider construction, default assertion, error handling
+scripts/compare_providers.py new evaluation harness
+reports/provider_eval_*.json measured results, now tracked as evidence
+AI_PROVIDER.md              evaluation table, decision, caveats, deployment fit
+README.md                   provider line and install instructions
+PROGRESS.md                 this section
+.gitignore                  keep provider_eval_*.json, ignore other report output
+```
+
+No new rules, no new knowledge sources, no RAG changes, no Session 2 or 3 behaviour
+changes. `knowledge_base.py`, `models.py`, `notebook_parser.py`, `runtime_checker.py`
+and `rules.py` are untouched.
+
+### Known limitations of this evaluation
+
+1. Two cases per provider. Groq's structured output was observed on 2 calls, not
+   measured over many, and Agno reports `supports_native_structured_outputs = False`
+   for Groq.
+2. Ollama results varied between runs: one run covered R004, two did not. Local model
+   output is not deterministic.
+3. Latency was measured on one developer machine with a warm model cache.
+4. No cost figure is given for Groq's paid tier. The project targets the free tier.
+5. Streamlit Community Cloud suitability is assessed, not deployed.
 
 ## Session 3 — what was built
 
@@ -128,17 +224,19 @@ marked `integration` and skips itself when Ollama is not reachable.
 
 ## Next session objective
 
-**SESSION 4 — UI + FINAL VERIFICATION.** Deterministic core and explanation layer are
-both done and must not be rewritten.
+**SESSION 4 — UI + FINAL VERIFICATION.** Deterministic core, explanation layer and
+provider decision are all settled and must not be rewritten.
 
 1. `app/streamlit_app.py`: upload `.ipynb`, select runtime snapshot, show notebook
    summary, detected dependencies, findings, overall status, recommended checks,
    evidence with sources, and limitations. No analysis logic in the UI.
 2. Graceful provider failure: show `llm_status` and keep the deterministic report.
+   `explainer.ProviderError` already gives the real reason.
 3. Record `llm_provider`, `llm_model`, `llm_status` on every rendered report.
-4. Representative notebook end-to-end runs.
-5. README final pass, an example report committed under `reports/`.
-6. Full validation: notebook never executed, no secrets, all tests pass, free provider
+4. Read `GROQ_API_KEY` from the environment, never from a tracked file.
+5. Representative notebook end-to-end runs.
+6. README final pass, an example report committed under `reports/`.
+7. Full validation: notebook never executed, no secrets, all tests pass, provider
    documented, UNKNOWN works, evidence visible, claims match behaviour.
 
 Do not add new rules or new knowledge sources.

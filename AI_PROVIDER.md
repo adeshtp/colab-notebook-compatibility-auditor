@@ -22,18 +22,103 @@ provider SDK or read an API key. `models.py`, `notebook_parser.py`,
 
 ## Selected provider
 
-**Default: local Ollama.** `COLABAUDIT_LLM_PROVIDER=ollama`, `COLABAUDIT_LLM_MODEL=ministral-3:3b`.
+**Default: Groq.** `COLABAUDIT_LLM_PROVIDER=groq`, `COLABAUDIT_LLM_MODEL=openai/gpt-oss-20b`.
 
-Reasoning:
+Chosen by measured comparison, not preference. See "Provider evaluation" below.
 
-- Genuinely free. No account, no quota, no billing.
-- **No API key required**, so no part of the project is blocked on credential setup.
-- Runs on CPU, sufficient for one compact explanation call per analysis.
-- `agno` supports it natively and it declares `supports_native_structured_outputs = True`, which the Pydantic report needs.
+- Fastest by an order of magnitude: 1.4–1.7 s per call against 53 s locally.
+- The only provider that explained **every** supplied rule, including the R002 + R004
+  pair the local 3B model repeatedly failed.
+- Reproduced all supplied versions and rule ids exactly.
+- Free tier is ample for this project: 30 RPM, 1,000 requests/day, 200K tokens/day.
+- No local hardware impact, and it deploys to Streamlit Community Cloud as an HTTP
+  call plus one environment secret.
 
-`ministral-3:3b` is the default rather than `qwen3.5:4b` because the latter produced empty schema-constrained output in verification.
+**Optional local mode: Ollama** with `ministral-3:3b`, for fully offline use with no
+key at all. Slower and less complete, see the measured results.
 
-**Optional alternative: OpenRouter free tier.** Enabled only by setting the environment variables below. It requires a key. It is never selected automatically.
+**Optional alternative: OpenRouter free tier**, unchanged and still opt-in.
+
+## Provider evaluation (2026-10-08)
+
+Method: `scripts/compare_providers.py`. Same two fixtures, same deterministic
+findings, same retrieved evidence, same system prompt, same `ExplanationResult`
+schema. Only the model changed. **Two requests per provider, four in total.** Raw
+records in `reports/provider_eval_<provider>.json`.
+
+| Dimension | Ollama `ministral-3:3b` | **Groq `openai/gpt-oss-20b`** | Gemini `gemini-3.8-flash` |
+|---|---|---|---|
+| Case A latency | 52.97 s | **1.67 s** | 15.51 s |
+| Case B latency | 52.32 s | **1.44 s** | failed, 3.92 s |
+| Requests succeeded | 2 / 2 | **2 / 2** | 1 / 2 |
+| Structured output valid | yes | **yes** | yes on the one success |
+| Case A rule coverage | complete | **complete** | complete |
+| Case B R002 + R004 coverage | **R004 missing** | **both explained** | not measured |
+| Versions reproduced exactly | yes | **yes** | **no, all three omitted** |
+| Rule ids reproduced exactly | yes | **yes** | yes |
+| Signalled uncertainty | yes | **yes** | no |
+| Overreach phrases | none | **none** | none |
+| Speculative snapshot mentions | none | **none** | none |
+| Agno native structured output | `True` | `False` | `True` |
+| Free tier | unlimited, local | 30 RPM, 1K RPD, 200K TPD | free tier, capacity-limited |
+| Free-tier data use | none, runs locally | not stated | **used to improve Google's products** |
+| Local hardware | sustained CPU load | none | none |
+| API key needed | no | yes | yes |
+
+### Why Groq won
+
+1. **Coverage on the failing case.** The one quality defect that motivated this
+   evaluation was the local model dropping R004. Groq explained both rules in the
+   same prompt, same schema, first try.
+2. **Latency.** 1.4–1.7 s against 53 s. A Streamlit UI feels broken at 53 s.
+3. **No abstraction drift.** Gemini's successful answer described "a specific package
+   version that differs from the version in the runtime" without naming `1.24.3` or
+   `2.0.2`. For a tool whose entire job is explaining a *specific* mismatch, that is
+   a substantive loss even though it parsed cleanly.
+4. **Proper hedging.** Groq kept the caveats, including "its presence in the live
+   runtime cannot be confirmed from the snapshot alone", which is exactly the R004
+   limitation from `RULES.md`.
+5. **Deployment fit.** Pure HTTP plus one environment secret. No GPU, no model
+   download, no long cold start on Streamlit Community Cloud.
+
+### Honest caveats about Groq
+
+- Agno reports `supports_native_structured_outputs = False` for Groq, so the schema is
+  not enforced server-side. It produced valid output on 2 of 2 calls, but this is not
+  a guarantee. `ExplanationResult.model_validate` is the safety net, and a validation
+  failure degrades to a deterministic-only report rather than a crash.
+- Free-tier limits are per organisation, not per key.
+- A raw HTTP request to Groq with a default Python `urllib` User-Agent is blocked by
+  Cloudflare with `error code: 1010`. Agno's client sends a normal User-Agent and is
+  unaffected, but this will bite anyone testing with `curl`/`urllib` directly.
+- `gpt-oss-20b` is a reasoning model. It emitted no stray reasoning into the structured
+  output in these runs, but that is a behaviour worth re-checking if output quality
+  regresses.
+
+### Why not Gemini
+
+One of two requests failed with `503 UNAVAILABLE, high demand`. A provider that can
+fail half your calls on a free tier is not a good default for a demo, whatever its
+benchmarks say. Separately, its successful answer omitted every concrete version and
+did not signal uncertainty. Both are disqualifying here.
+
+There is also a setup trap: Agno's `Gemini` class reads only `GOOGLE_API_KEY` and logs
+`GOOGLE_API_KEY not set` when only `GEMINI_API_KEY` is present, even though the
+underlying `google-genai` SDK falls back to `GEMINI_API_KEY` and the call then succeeds.
+The logged error is misleading.
+
+### Why Ollama is kept
+
+It is the only option with no key, no quota, no data leaving the machine, and no
+per-request cost. That is worth keeping for offline use and for anyone who does not want
+to configure a credential. It is no longer the default because it is ~30x slower, it
+leaves R004 unexplained, and it pins the developer machine at 100% CPU for a minute.
+
+### What this evaluation does not establish
+
+Two cases per provider is an engineering selection, not a benchmark. No accuracy
+figure, win rate or statistical claim is made. Groq's structured-output reliability was
+observed on 2 calls, not measured over many.
 
 ## Session 3 verification (2026-10-08)
 
@@ -68,11 +153,16 @@ All configuration is by environment variable. No key is ever read from, or writt
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `COLABAUDIT_LLM_PROVIDER` | `ollama` | `ollama` or `openrouter`. |
-| `COLABAUDIT_LLM_MODEL` | `ministral-3:3b` | Provider-specific model id. |
-| `COLABAUDIT_OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL. |
+| `COLABAUDIT_LLM_PROVIDER` | `groq` | `groq`, `gemini`, `ollama` or `openrouter`. |
+| `COLABAUDIT_LLM_MODEL` | `openai/gpt-oss-20b` | Provider-specific model id. |
+| `GROQ_API_KEY` | unset | Required when provider is `groq`, the default. |
+| `GEMINI_API_KEY` | unset | Used when provider is `gemini`. Also export `GOOGLE_API_KEY`, see the caveat above. |
+| `COLABAUDIT_OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL, local mode only. |
 | `OPENROUTER_API_KEY` | unset | Required only when provider is `openrouter`. |
 | `COLABAUDIT_LLM_ENABLED` | `0` | Set to `1` to allow the LLM stage. Default `0` keeps the deterministic pipeline the only active path. |
+
+The deterministic audit never reads any of these. Keys are read only by
+`explainer.build_model`.
 
 ## API key policy
 
@@ -84,7 +174,9 @@ If the configured provider requires a key and no valid key is present:
 - Do not silently switch provider or fall back to a paid model.
 - Do not block any work that does not need the key.
 
-Current state: **no API key is needed.** The default provider is local Ollama.
+Current state: the default provider `groq` **requires `GROQ_API_KEY`**. Local mode
+(`COLABAUDIT_LLM_PROVIDER=ollama`) still needs no key, and the deterministic audit
+never needs one.
 
 ## Request budget
 
@@ -106,6 +198,13 @@ the explanation separately, so the caller records `llm_status` as `not_configure
 
 ## Configuration examples
 
+Default, Groq:
+
+```bash
+export GROQ_API_KEY=gsk_...        # never committed
+export COLABAUDIT_LLM_ENABLED=1
+```
+
 Local, no key:
 
 ```bash
@@ -114,19 +213,48 @@ export COLABAUDIT_LLM_MODEL=ministral-3:3b
 export COLABAUDIT_LLM_ENABLED=1
 ```
 
+Gemini:
+
+```bash
+export COLABAUDIT_LLM_PROVIDER=gemini
+export COLABAUDIT_LLM_MODEL=gemini-3.8-flash
+export GEMINI_API_KEY=...          # never committed
+export GOOGLE_API_KEY=...          # Agno reads this name
+export COLABAUDIT_LLM_ENABLED=1
+```
+
 OpenRouter free tier, if chosen:
 
 ```bash
 export COLABAUDIT_LLM_PROVIDER=openrouter
 export COLABAUDIT_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b:free
-export OPENROUTER_API_KEY=...   # never committed
+export OPENROUTER_API_KEY=...      # never committed
 export COLABAUDIT_LLM_ENABLED=1
 ```
 
 ## Runtime degradation
 
-A free model may become unavailable or rate-limited. In that case:
+A free tier may become unavailable or rate-limited. In that case:
 
 - Catch the error, record it in `llm_status`, show it in the UI.
 - Keep the deterministic report.
 - Do not restructure the architecture and do not switch to a paid model.
+
+`explainer.ProviderError` is raised when a provider returns an error document in the
+response body rather than an exception. This was added because a Gemini `503` was
+otherwise surfaced to the caller as a confusing `ValidationError`. `run_explanation`
+catches it and returns the deterministic report unchanged.
+
+## Streamlit Community Cloud suitability
+
+The intended deployment is: upload notebook, deterministic audit, local retrieval,
+hosted LLM API, structured explanation, report.
+
+- **Groq** suits this. One HTTPS request per analysis and one environment secret. No
+  GPU, no model download, no cold start. LanceDB and the SentenceTransformer index stay
+  local to the container.
+- **Gemini** suits it structurally, but its free tier showed a `503` under low load.
+- **Ollama does not suit it.** Streamlit Community Cloud has no GPU and a modest CPU
+  allowance, so a local 3B model would be slower still than on a developer machine.
+
+None of this has been deployed. It is a fit assessment, not a deployment claim.

@@ -21,6 +21,9 @@ data/lancedb/
 reports/*.json
 reports/*.jsonl
 
+# Provider comparison evidence is kept, unlike other report output.
+!reports/provider_eval_*.json
+
 # Notebooks
 .ipynb_checkpoints/
 

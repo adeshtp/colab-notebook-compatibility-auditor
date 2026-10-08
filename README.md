@@ -72,21 +72,25 @@ The explanation model cannot alter a finding: `ExplanationResult` has no version
 severity or status field, and `AuditResult` has no explanation field, so the two cannot
 merge.
 
-Provider: local Ollama, `ministral-3:3b`. No API key. See `AI_PROVIDER.md`.
+Provider: Groq `openai/gpt-oss-20b` by default, chosen by measured comparison against
+local Ollama and Gemini. Needs `GROQ_API_KEY`. Set
+`COLABAUDIT_LLM_PROVIDER=ollama` for a fully offline run with no key. See
+`AI_PROVIDER.md`.
 
 ## Running the tests
 
 ```bash
 python -m venv .venv
 .venv/bin/pip install pydantic pytest
-.venv/bin/pip install agno==3.1.1 lancedb sentence-transformers ollama openai
-.venv/bin/python -m pytest -m "not integration"   # no LLM needed
-.venv/bin/python -m pytest                        # includes the live local model test
+.venv/bin/pip install agno==3.1.1 lancedb sentence-transformers openai groq
+.venv/bin/python -m pytest -m "not integration"   # no LLM key needed
+.venv/bin/python -m pytest                        # adds one live model call
 ```
 
-No API key is needed for any test. The RAG tests build a real local LanceDB index, so
-the first run takes about a minute while the embedding model is downloaded. The single
-live model call is marked `integration` and skips itself if Ollama is not running.
+No API key is needed for any deterministic test. The RAG tests build a real local
+LanceDB index, so the first run takes about a minute while the embedding model is
+downloaded. The single live model call is marked `integration` and skips itself when
+the provider is not reachable.
 
 ## Governance documents
 
