@@ -1,0 +1,83 @@
+{
+  "manifest_version": 1,
+  "generated": "2026-10-08",
+  "policy": {
+    "primary_sources": [
+      "official Google Colab documentation",
+      "googlecolab GitHub organisation (colabtools, backend-info, google-colab-cli)"
+    ],
+    "excluded": [
+      "random blogs",
+      "SEO content pages",
+      "generic tutorials",
+      "Stack Overflow",
+      "scraped forum posts"
+    ],
+    "content_type_values": ["SOURCE_FACT", "RECOMMENDATION"],
+    "note": "Every file in data/sources/ must have an entry here. Retrieval must preserve content_type. If evidence is missing for a claim, the answer is UNKNOWN."
+  },
+  "sources": [
+    {
+      "source_id": "colab-runtime-version-faq",
+      "file": "colab_runtime_version_faq.md",
+      "source": "Google Colab",
+      "title": "Frequently Asked Questions - Past Runtime Versions",
+      "url": "https://research.google.com/colaboratory/runtime-version-faq.html",
+      "retrieved": "2026-10-08",
+      "runtime_context": "all",
+      "content_type": "SOURCE_FACT",
+      "used_for": ["R006", "status aggregation", "recommendations"]
+    },
+    {
+      "source_id": "colab-backend-info-transparency",
+      "file": "colab_backend_info_transparency.md",
+      "source": "Google Developers Blog (Google Colab team)",
+      "title": "Google Colab Adds More Back to School Improvements!",
+      "url": "https://developers.googleblog.com/en/google-colab-adds-more-back-to-school-improvements/",
+      "retrieved": "2026-10-08",
+      "runtime_context": "all",
+      "content_type": "SOURCE_FACT",
+      "used_for": ["problem framing", "recommendations"]
+    },
+    {
+      "source_id": "colab-backend-info-readme",
+      "file": "colab_backend_info_readme.md",
+      "source": "googlecolab/backend-info",
+      "title": "Backend Information README",
+      "url": "https://github.com/googlecolab/backend-info/blob/main/README.md",
+      "retrieved": "2026-10-08",
+      "runtime_context": "all",
+      "content_type": "SOURCE_FACT",
+      "used_for": ["R004 limitation", "limitations section", "snapshot provenance"]
+    },
+    {
+      "source_id": "colab-filesystem-conventions",
+      "file": "colab_filesystem_conventions.md",
+      "source": "googlecolab/google-colab-cli",
+      "title": "Colab CLI README - runtime filesystem and drive mount",
+      "url": "https://github.com/googlecolab/google-colab-cli",
+      "retrieved": "2026-10-08",
+      "runtime_context": "all",
+      "content_type": "SOURCE_FACT",
+      "used_for": ["R003", "R006"]
+    },
+    {
+      "source_id": "colab-pip-install-behaviour",
+      "file": "colab_pip_install_behaviour.md",
+      "source": "googlecolab/colabtools",
+      "title": "google.colab._pip - pip install post-install warning behaviour",
+      "url": "https://github.com/googlecolab/colabtools/blob/main/google/colab/_pip.py",
+      "retrieved": "2026-10-08",
+      "runtime_context": "all",
+      "content_type": "SOURCE_FACT",
+      "used_for": ["R005", "R007", "R002", "recommendations"]
+    }
+  ],
+  "runtime_metadata": {
+    "repository": "https://github.com/googlecolab/backend-info",
+    "local_path": "data/runtimes/<snapshot>/",
+    "files": ["pip-freeze.txt", "os-info.txt", "manifest.json"],
+    "fetch_script": "scripts/fetch_runtimes.py",
+    "caveat": "backend-info states these files reflect the most recent submitted CI change and may lag a live runtime by one or two days."
+  }
+}

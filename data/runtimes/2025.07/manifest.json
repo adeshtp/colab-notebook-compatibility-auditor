@@ -1,0 +1,11 @@
+{
+  "snapshot": "2025.07",
+  "source_repository": "https://github.com/googlecolab/backend-info",
+  "commit": "ef1cba030a9f7a39bf42912a42f6462d6d4908e8",
+  "retrieved": "2026-10-08",
+  "files": [
+    "pip-freeze.txt",
+    "os-info.txt"
+  ],
+  "caveat": "backend-info states these files reflect the most recent submitted CI change, not necessarily the live runtime, and may lag by one or two days."
+}
