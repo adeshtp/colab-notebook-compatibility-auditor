@@ -23,3 +23,5 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
+# Local RAG tests build a real LanceDB index; the live model call is integration only.
+markers = ["integration: requires the local Ollama model to be running"]
