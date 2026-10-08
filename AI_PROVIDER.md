@@ -37,7 +37,9 @@ Chosen by measured comparison, not preference. See "Provider evaluation" below.
 **Optional local mode: Ollama** with `ministral-3:3b`, for fully offline use with no
 key at all. Slower and less complete, see the measured results.
 
-**Optional alternative: OpenRouter free tier**, unchanged and still opt-in.
+Gemini and OpenRouter were evaluated or considered and are not supported. See "Why not
+Gemini" below. Raw records are kept in `reports/provider_eval_*.json`; there is no code
+path for either.
 
 ## Provider evaluation (2026-10-08)
 
@@ -127,9 +129,11 @@ figure, win rate or statistical claim is made. Groq's structured-output reliabil
 observed on roughly 14 live calls and failed once, which is noted above rather than
 smoothed over.
 
-## Session 3 verification (2026-10-08)
+## Integration verification (historical)
 
-Confirmed by actually running the pipeline, not by inspection:
+Confirmed by running the pipeline during initial build-out, while local Ollama was the
+only provider. Recorded because the findings drove real code decisions. **This is not
+the current configuration**: see "Selected provider" above for the key requirement.
 
 | Fact | Result |
 |---|---|
@@ -138,11 +142,13 @@ Confirmed by actually running the pipeline, not by inspection:
 | `Ollama` native structured output | `supports_native_structured_outputs = True`, confirmed on the installed class |
 | Embeddings | `sentence-transformers/all-MiniLM-L6-v2`, downloaded from the HF Hub on first run, cached after that |
 | Vector store | local LanceDB at `data/lancedb/`, no cloud, no key |
-| LLM call time | roughly 1-2 minutes per call on CPU for a small explanation |
-| API key required | **No.** Nothing in the pipeline reads a key. |
+| LLM call time in that local-only setup | roughly 1-2 minutes per call on CPU |
 | Generation cap | 700 tokens, needed because a 3B model otherwise runs past the limit and returns unparseable JSON |
 
-### Defects found and fixed during verification
+The 700-token cap is applied to the local Ollama mode only. The hosted Groq path is not
+capped; see the parse-failure caveat above.
+
+### Defects found and fixed during that verification
 
 1. `Document` in Agno 3.1.1 has `meta_data`, not `metadata`, and exposes no `score`
    field. Retrieved results carry `rank` instead of a fabricated similarity number.
@@ -151,8 +157,6 @@ Confirmed by actually running the pipeline, not by inspection:
 3. `agno.models.ollama` imports `agno.models.openai`, so the `openai` package must be
    installed even when no OpenAI account or key is used. This is a transitive import in
    Agno, not a second provider.
-4. Generation is capped at 700 tokens. Uncapped, the model produced 800+ tokens and
-   returned truncated, unparseable JSON.
 
 ## Configuration
 
@@ -160,30 +164,27 @@ All configuration is by environment variable. No key is ever read from, or writt
 
 | Variable | Default | Meaning |
 |---|---|---|
-| `COLABAUDIT_LLM_PROVIDER` | `groq` | `groq`, `gemini`, `ollama` or `openrouter`. |
+| `COLABAUDIT_LLM_PROVIDER` | `groq` | `groq` or `ollama`. Any other value is rejected. |
 | `COLABAUDIT_LLM_MODEL` | `openai/gpt-oss-20b` | Provider-specific model id. |
 | `GROQ_API_KEY` | unset | Required when provider is `groq`, the default. |
-| `GEMINI_API_KEY` | unset | Used when provider is `gemini`. Also export `GOOGLE_API_KEY`, see the caveat above. |
-| `COLABAUDIT_OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL, local mode only. |
-| `OPENROUTER_API_KEY` | unset | Required only when provider is `openrouter`. |
-| `COLABAUDIT_LLM_ENABLED` | `0` | Set to `1` to allow the LLM stage. Default `0` keeps the deterministic pipeline the only active path. |
+| `COLABAUDIT_OLLAMA_HOST` | `http://localhost:11434` | Ollama base URL, offline mode only. |
 
 The deterministic audit never reads any of these. Keys are read only by
-`explainer.build_model`.
+`explainer.build_model`, and by the Streamlit app when copying a Streamlit secret into
+the environment.
+
+Whether the AI step runs is chosen by the caller: a checkbox in the UI, or simply
+whether you call `explainer.explain`. There is no separate feature flag.
 
 ## API key policy
 
-If the configured provider requires a key and no valid key is present:
+The default provider requires `GROQ_API_KEY`. No key is ever read from, or written to, a
+tracked file, and the value is never displayed or logged.
 
-- Stop only at that point.
-- Ask the user exactly: "An API key is required for the selected free provider/model. Do you want to create/configure the key now?"
-- Do not generate, invent, or guess credentials.
-- Do not silently switch provider or fall back to a paid model.
-- Do not block any work that does not need the key.
-
-Current state: the default provider `groq` **requires `GROQ_API_KEY`**. Local mode
-(`COLABAUDIT_LLM_PROVIDER=ollama`) still needs no key, and the deterministic audit
-never needs one.
+- If the key is absent, the deterministic audit and evidence retrieval still run and the
+  UI reports the AI step as unavailable. It does not crash.
+- Credentials are never invented, guessed, or substituted for another provider.
+- No silent fallback to a paid model.
 
 ## Request budget
 
@@ -199,9 +200,9 @@ never needs one.
 ## Provider metadata in output
 
 `explainer.DEFAULT_PROVIDER` and `explainer.DEFAULT_MODEL` record which provider and
-model are configured, and `run_explanation` returns the audit result, the evidence and
-the explanation separately, so the caller records `llm_status` as `not_configured`,
-`ok` or `failed` alongside them. Session 4 renders that in the UI.
+model are configured. The Streamlit app reports the outcome per analysis as one of
+`ok`, `disabled`, `not_configured` or `failed`, and shows it next to the explanation
+section.
 
 ## Configuration examples
 
@@ -209,34 +210,13 @@ Default, Groq:
 
 ```bash
 export GROQ_API_KEY=gsk_...        # never committed
-export COLABAUDIT_LLM_ENABLED=1
 ```
 
-Local, no key:
+Offline, no key:
 
 ```bash
 export COLABAUDIT_LLM_PROVIDER=ollama
 export COLABAUDIT_LLM_MODEL=ministral-3:3b
-export COLABAUDIT_LLM_ENABLED=1
-```
-
-Gemini:
-
-```bash
-export COLABAUDIT_LLM_PROVIDER=gemini
-export COLABAUDIT_LLM_MODEL=gemini-3.8-flash
-export GEMINI_API_KEY=...          # never committed
-export GOOGLE_API_KEY=...          # Agno reads this name
-export COLABAUDIT_LLM_ENABLED=1
-```
-
-OpenRouter free tier, if chosen:
-
-```bash
-export COLABAUDIT_LLM_PROVIDER=openrouter
-export COLABAUDIT_LLM_MODEL=nvidia/nemotron-3-super-120b-a12b:free
-export OPENROUTER_API_KEY=...      # never committed
-export COLABAUDIT_LLM_ENABLED=1
 ```
 
 ## Runtime degradation
@@ -249,8 +229,8 @@ A free tier may become unavailable or rate-limited. In that case:
 
 `explainer.ProviderError` is raised when a provider returns an error document in the
 response body rather than an exception. This was added because a Gemini `503` was
-otherwise surfaced to the caller as a confusing `ValidationError`. `run_explanation`
-catches it and returns the deterministic report unchanged.
+otherwise surfaced to the caller as a confusing `ValidationError`. The Streamlit app
+catches it, reports `failed` and keeps the deterministic report unchanged.
 
 ## Streamlit Community Cloud suitability
 
@@ -260,7 +240,6 @@ hosted LLM API, structured explanation, report.
 - **Groq** suits this. One HTTPS request per analysis and one environment secret. No
   GPU, no model download, no cold start. LanceDB and the SentenceTransformer index stay
   local to the container.
-- **Gemini** suits it structurally, but its free tier showed a `503` under low load.
 - **Ollama does not suit it.** Streamlit Community Cloud has no GPU and a modest CPU
   allowance, so a local 3B model would be slower still than on a developer machine.
 

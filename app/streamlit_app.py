@@ -7,12 +7,14 @@ executed.
 
 import os
 import sys
+import tempfile
 from pathlib import Path
 
 import streamlit as st
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
+import notebook_parser  # noqa: E402
 import runtime_checker  # noqa: E402
 from explainer import (  # noqa: E402
     ProviderError,
@@ -28,7 +30,7 @@ PROVIDER_MODELS = {
     "groq": "openai/gpt-oss-20b",
     "ollama": "ministral-3:3b",
 }
-KEY_VARIABLES = {"groq": "GROQ_API_KEY", "gemini": "GEMINI_API_KEY"}
+KEY_VARIABLES = {"groq": "GROQ_API_KEY"}
 
 STATUS_COLOUR = {"READY": "green", "ATTENTION": "orange", "HIGH_RISK": "red", "UNKNOWN": "grey"}
 
@@ -117,15 +119,32 @@ if not st.button("Analyze", type="primary", disabled=uploaded is None):
 
 api_key = resolve_api_key(provider)
 
-# The notebook is written to disk only so the existing parser can read it as JSON.
-upload_path = Path("/tmp") / "colab_audit_upload.ipynb"
-upload_path.write_bytes(uploaded.getbuffer())
-
-try:
-    result = rules.audit_notebook(str(upload_path), snapshot)
-except Exception:
-    st.error("This file could not be read as a Jupyter notebook.")
+# The uploaded notebook is written to a private temp file so the existing parser can
+# read it as JSON. A unique name per session stops two concurrent users from
+# overwriting each other's notebook, and the file is deleted straight afterwards.
+if uploaded.size > notebook_parser.MAX_NOTEBOOK_BYTES:
+    st.error(
+        f"File is too large to parse safely. Limit is "
+        f"{notebook_parser.MAX_NOTEBOOK_BYTES // (1024 * 1024)} MB."
+    )
     st.stop()
+
+handle = tempfile.NamedTemporaryFile(suffix=".ipynb", delete=False)
+upload_path = Path(handle.name)
+try:
+    handle.write(uploaded.getbuffer())
+    handle.close()
+    try:
+        result = rules.audit_notebook(str(upload_path), snapshot)
+    except Exception:
+        st.error("This file could not be read as a Jupyter notebook.")
+        st.stop()
+finally:
+    upload_path.unlink(missing_ok=True)
+
+# The parser reads the notebook name off the path, and the temp name is random, so
+# restore the name the user actually uploaded.
+result.notebook_name = uploaded.name
 
 knowledge = get_knowledge()
 evidence = collect_evidence(knowledge, result)
@@ -205,10 +224,18 @@ for rule, hits in evidence.items():
     st.markdown(f"**{rule}**")
     if not hits:
         st.warning("No evidence retrieved for this rule.")
+
+    # Several retrieved chunks often come from one document. Group them under a
+    # single heading so the source is stated once instead of repeated per chunk.
+    by_source = {}
     for hit in hits:
-        with st.expander(f"{hit['title']} — {hit['source']}"):
-            st.caption(hit["url"])
-            st.text(hit["content"])
+        by_source.setdefault((hit["source"], hit["title"], hit["url"]), []).append(hit["content"])
+
+    for (source, title, url), snippets in by_source.items():
+        st.markdown(f"*{source} — {title}*")
+        st.caption(url)
+        for snippet in snippets:
+            st.markdown(f"> {snippet}")
 
 st.subheader("AI-generated explanation")
 st.caption(f"Provider: {provider} · model: {model} · {status_caption(llm_status)}.")

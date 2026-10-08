@@ -56,8 +56,8 @@ The report status is computed deterministically. The model writes prose into `ex
 
 ## Modules
 
-Session 2 simplified these to four plain modules under `src/`. There are no classes
-beyond the Pydantic models, no factories, and no interfaces.
+Six plain modules. There are no classes beyond the Pydantic models, no factories, and
+no interfaces.
 
 | Module | Responsibility |
 |---|---|
@@ -70,8 +70,9 @@ beyond the Pydantic models, no factories, and no interfaces.
 | `app/streamlit_app.py` | Streamlit UI. Presentation only, no analysis logic. |
 
 `rules.audit_notebook(notebook_path, snapshot)` is the whole deterministic stage: one
-function, plain data in, plain data out. `explainer.run_explanation` chains the audit,
-the retrieval and the one model call. The app calls those and renders the result.
+function, plain data in, plain data out. The three-step sequence above
+(`audit_notebook` → `collect_evidence` → `explain`) is the single orchestration path.
+The Streamlit app is the only caller; it renders the result of each step.
 
 Nothing under `src/` is a class except the Pydantic models. No factories, no
 dependency injection, no service layer, no plugin registry. Provider selection is a
@@ -87,8 +88,10 @@ One audit produces **one** LLM call. Retrieval happens before it.
   chunks each.
 - The prompt carries findings, evidence and limitations. Full notebook source is never
   sent.
-- Generation is capped at 700 tokens. A 3B model on CPU will otherwise ramble past the
-  token limit and return unparseable JSON.
+- Generation is capped at 700 tokens **in the offline Ollama mode only**. A 3B model on
+  CPU will otherwise ramble past the limit and return unparseable JSON. The hosted Groq
+  path is not capped, which is the observed cause of its occasional parse failure; see
+  `AI_PROVIDER.md`.
 
 ## Active rules
 
@@ -148,15 +151,23 @@ in a caption for debugging.
 
 ## Degradation behaviour
 
-- `COLABAUDIT_LLM_ENABLED` unset or `0` → `run_explanation` returns the audit and the
-  evidence with `None` for the explanation. The deterministic pipeline is the default.
-- Provider error or rate limit → `run_explanation` catches it and returns
-  `(result, evidence, None)`. The deterministic report is untouched. No provider
-  switching, no paid fallback, no architecture change.
+The caller decides whether to attempt the model call, so degradation is the caller's to
+report. The Streamlit app tracks this as `llm_status`:
+
+- Caller does not request an explanation → `disabled`.
+- No key for the configured provider → `not_configured`. The audit and the evidence
+  still render.
+- `ProviderError`, rate limit, or an unparseable response → `failed`, with the reason
+  kept in a caption. The deterministic report is untouched. No provider switching, no
+  paid fallback, no architecture change.
+- `ok` when the structured response validates.
+
+Separately, and independent of any provider:
+
 - RAG retrieval returns nothing for a rule → that rule's evidence list is empty and the
   prompt records it as `(no evidence retrieved)`. The deterministic status is unchanged,
   because retrieval never drives a finding.
 - No runtime snapshot selected → `audit_notebook` returns `UNKNOWN` with an R006
   finding. Nothing is guessed.
-- The local model fails to explain every rule → `explainer.unexplained_rules` reports
-  the gap deterministically instead of hiding it.
+- The model does not explain every rule → `explainer.unexplained_rules` reports the gap
+  deterministically instead of hiding it.

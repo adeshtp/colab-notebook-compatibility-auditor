@@ -9,7 +9,6 @@ description = "Static compatibility risk auditing for old Google Colab notebooks
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
-# Groq is the default explanation provider, so `groq` is not optional in practice.
 llm = [
     "agno>=3.1,<4",
     "groq>=0.30",
@@ -22,13 +21,21 @@ local = [
     "ollama>=0.6",
 ]
 ui = ["streamlit>=1.65"]
+dev = ["pytest>=9.1", "pyflakes>=3"]
 
-[tool.setuptools.packages.find]
-where = ["src"]
+[tool.setuptools]
+# src/ is a flat script directory, not an installed package: there are no
+# __init__.py files and the modules import each other by bare name. Use
+# PYTHONPATH=src rather than installing it. An editable install does not work on
+# Python 3.14, which skips the setuptools .pth file because its name starts with
+# "__", so the install appears to succeed and then fails to import.
+package-dir = { "" = "src" }
+py-modules = ["notebook_parser", "runtime_checker", "rules", "models",
+              "knowledge_base", "explainer"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
 # RAG tests build a real local LanceDB index. Only the marked test makes a live
-# provider call, and it skips itself when the provider is unreachable.
-markers = ["integration: makes a live explanation-provider call"]
+# provider call, and it skips itself unless RUN_OLLAMA_TESTS=1 is set.
+markers = ["integration: makes a live Ollama call, opt-in via RUN_OLLAMA_TESTS=1"]

@@ -18,7 +18,6 @@ from explainer import (
     build_query_for,
     collect_evidence,
     distinct_findings,
-    is_llm_enabled,
     unexplained_rules,
 )
 from models import AuditResult, Finding
@@ -80,28 +79,32 @@ def test_prompt_states_the_exact_number_of_explanations_required():
     assert "Write exactly 2 explanation(s)" in build_prompt(result, {})
 
 
-def test_llm_stage_is_off_by_default(monkeypatch):
-    monkeypatch.delenv("COLABAUDIT_LLM_ENABLED", raising=False)
-    assert is_llm_enabled() is False
-
-    monkeypatch.setenv("COLABAUDIT_LLM_ENABLED", "1")
-    assert is_llm_enabled() is True
-
-
-def test_unknown_provider_is_rejected():
-    with pytest.raises(ValueError):
-        explainer.build_model(provider="openai")
-
-
-def test_every_documented_provider_builds_without_calling_it():
-    """Construction only. No request, so no key is needed."""
-    from agno.models.google import Gemini
+def test_only_the_retained_providers_are_supported():
     from agno.models.groq import Groq
     from agno.models.ollama import Ollama
 
-    assert isinstance(explainer.build_model("ollama", "ministral-3:3b"), Ollama)
     assert isinstance(explainer.build_model("groq", "openai/gpt-oss-20b"), Groq)
-    assert isinstance(explainer.build_model("gemini", "gemini-3.8-flash"), Gemini)
+    assert isinstance(explainer.build_model("ollama", "ministral-3:3b"), Ollama)
+
+
+@pytest.mark.parametrize("provider", ["gemini", "openrouter", "openai"])
+def test_unsupported_providers_are_rejected(provider):
+    """Gemini and OpenRouter were evaluated or considered and deliberately dropped."""
+    with pytest.raises(ValueError):
+        explainer.build_model(provider=provider)
+
+
+def test_generation_cap_is_applied_to_the_offline_mode():
+    """The 700-token cap exists to stop the local 3B model returning broken JSON."""
+    model = explainer.build_model("ollama", "ministral-3:3b")
+
+    assert model.options == {"num_predict": explainer.MAX_TOKENS}
+
+
+def test_no_feature_flag_controls_the_ai_step():
+    """The caller chooses by calling explain() or not. There is no env flag."""
+    assert not hasattr(explainer, "is_llm_enabled")
+    assert not hasattr(explainer, "run_explanation")
 
 
 def test_groq_is_the_selected_default():

@@ -2,7 +2,7 @@
 #
 # On Streamlit Community Cloud, set the same key under Settings -> Secrets instead:
 #
-#   GROQ_API_KEY = "gsk_..."
+#   GROQ_API_KEY = "..."
 #
 # Do not commit a secrets.toml. It is gitignored.
 
@@ -11,3 +11,10 @@ headless = true
 
 [browser]
 gatherUsageStats = false
+
+# The file watcher stays on for hot reload during development. It is not needed in
+# deployment. Note that editing a file can make transformers print a one-off
+# "torchvision is not installed" probe in the terminal. torchvision is an optional
+# soft dependency of transformers, is not a dependency of this project, and is not
+# imported by the app. The messages are harmless and the app is unaffected. The
+# embedding model used here is a text model and does not need it.

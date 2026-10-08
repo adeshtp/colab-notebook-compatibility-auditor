@@ -1,0 +1,24 @@
+# Verified on macOS arm64, Python 3.14.3. Pinned because Agno changed its
+# Knowledge and structured-output APIs between 2.x and 3.x.
+agno==3.1.1
+pydantic==2.14.0
+
+# Groq is the default explanation provider.
+groq==1.7.0
+
+# Local retrieval.
+lancedb==0.40.0
+sentence-transformers==6.1.0
+torch==2.14.1
+transformers==5.19.0
+
+# Pulled in by agno.models.ollama and agno.models.groq. Both are imported at module
+# level by src/explainer.py, so they are required even when only Groq is used.
+openai==3.26.1
+ollama==0.6.3
+
+# UI.
+streamlit==1.65.0
+
+# Tests.
+pytest==9.1.1

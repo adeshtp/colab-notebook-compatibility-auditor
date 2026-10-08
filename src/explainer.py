@@ -8,26 +8,25 @@ import json
 import os
 
 from agno.agent import Agent
-from agno.models.google import Gemini
 from agno.models.groq import Groq
 from agno.models.ollama import Ollama
-from agno.models.openrouter import OpenRouter
 from pydantic import BaseModel, Field
 
+from knowledge_base import retrieve
 from models import AuditResult, Finding
 
 # One audit, one explanation call. No teams, no tool loops, no per-finding calls.
-# Defaults chosen by measured comparison in scripts/compare_providers.py, see
-# AI_PROVIDER.md. Groq was fastest and the only provider to explain every supplied
-# rule. Ollama stays available as an offline local mode.
+# Chosen by measured comparison, see AI_PROVIDER.md. Groq was fastest and the only
+# provider to explain every supplied rule. Ollama is the offline mode.
 DEFAULT_PROVIDER = os.getenv("COLABAUDIT_LLM_PROVIDER", "groq")
 DEFAULT_MODEL = os.getenv("COLABAUDIT_LLM_MODEL", "openai/gpt-oss-20b")
 DEFAULT_HOST = os.getenv("COLABAUDIT_OLLAMA_HOST", "http://localhost:11434")
 
-# A 3B model on CPU will happily ramble for thousands of tokens and get cut off
-# mid-JSON, which fails schema validation. Capping generation keeps one call short
-# and the output parseable.
+# Applies to the local Ollama mode only. A 3B model on CPU will otherwise ramble past
+# the token limit and return unparseable JSON. The hosted Groq path is not capped;
+# see AI_PROVIDER.md for the observed consequence of that.
 MAX_TOKENS = 700
+
 
 class ProviderError(Exception):
     """A provider returned an error document instead of an explanation."""
@@ -78,19 +77,15 @@ class ExplanationResult(BaseModel):
 def build_model(provider: str = DEFAULT_PROVIDER, model: str = DEFAULT_MODEL):
     """Return the configured model.
 
-    Plain configuration-driven selection, no factory or registry. Groq is the
-    default and reads GROQ_API_KEY from the environment. Ollama is the offline
-    local mode and needs no key. Unknown provider names are rejected rather than
-    guessed at.
+    Plain configuration-driven selection, no factory or registry. Groq is the default
+    and reads GROQ_API_KEY from the environment. Ollama is the offline local mode and
+    needs no key. Only the two evaluated-and-retained providers are supported; see
+    AI_PROVIDER.md for the comparison that selected them.
     """
-    if provider == "ollama":
-        return Ollama(id=model, host=DEFAULT_HOST, options={"num_predict": MAX_TOKENS})
     if provider == "groq":
         return Groq(id=model)
-    if provider == "gemini":
-        return Gemini(id=model)
-    if provider == "openrouter":
-        return OpenRouter(id=model)
+    if provider == "ollama":
+        return Ollama(id=model, host=DEFAULT_HOST, options={"num_predict": MAX_TOKENS})
     raise ValueError(f"Unknown provider: {provider}")
 
 
@@ -126,8 +121,6 @@ def distinct_findings(result: AuditResult) -> list[Finding]:
 
 def collect_evidence(knowledge, result: AuditResult, max_results: int = 3) -> dict[str, list[dict]]:
     """Retrieve evidence per distinct rule. Fully deterministic, no model involved."""
-    from knowledge_base import retrieve
-
     evidence = {}
 
     for finding in distinct_findings(result):
@@ -248,48 +241,9 @@ def parse_explanation(content, provider: str = DEFAULT_PROVIDER) -> ExplanationR
 def unexplained_rules(result: AuditResult, explanation: ExplanationResult) -> list[str]:
     """Rules the model failed to explain, in order.
 
-    A 3B model does not reliably cover every rule, so coverage is checked
+    A model may not cover every rule it was given, so coverage is checked
     deterministically and the gap is reported rather than hidden.
     """
     explained = " ".join(explanation.explanations).upper()
 
     return [f.rule for f in distinct_findings(result) if f.rule not in explained]
-
-
-def is_llm_enabled() -> bool:
-    """The LLM stage is opt-in. Default off keeps the deterministic pipeline the only path."""
-    return os.getenv("COLABAUDIT_LLM_ENABLED", "0") == "1"
-
-
-def run_explanation(
-    notebook_path: str,
-    snapshot: str | None,
-    knowledge=None,
-    max_results: int = 3,
-) -> tuple[AuditResult, dict, dict | None]:
-    """Full pipeline: deterministic audit, evidence retrieval, one explanation call.
-
-    Returns (audit result, evidence, explanation or None). A provider failure yields
-    None rather than raising, so the deterministic report survives untouched.
-    """
-    import rules
-
-    from knowledge_base import build_knowledge, ingest
-
-    result = rules.audit_notebook(notebook_path, snapshot)
-
-    if knowledge is None:
-        knowledge = build_knowledge()
-        ingest(knowledge)
-
-    evidence = collect_evidence(knowledge, result, max_results=max_results)
-
-    if not is_llm_enabled():
-        return result, evidence, None
-
-    try:
-        return result, evidence, explain(result, evidence)
-    except Exception:
-        # Includes ProviderError. Recorded by the caller as llm_status. No provider
-        # switching, no architecture change, no paid fallback.
-        return result, evidence, None

@@ -65,6 +65,17 @@ def test_no_key_reports_the_ai_step_as_unavailable(monkeypatch):
     assert "not configured" in body or "unavailable" in body
 
 
+def test_report_names_the_uploaded_notebook_not_the_temp_file(monkeypatch):
+    """The report must show the user's filename, never a random temp name."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    app = analyse(upload(open_app(), "mismatching_pin"))
+
+    captions = " ".join(c.value for c in app.caption)
+    assert "mismatching_pin.ipynb" in captions
+    assert "tmp" not in captions.split("mismatching_pin.ipynb")[0][-40:]
+
+
 def test_locked_provider_models_match_the_decision():
     source = APP_PATH.read_text()
 

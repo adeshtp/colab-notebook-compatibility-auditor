@@ -23,9 +23,10 @@ data/lancedb/
 reports/*.json
 reports/*.jsonl
 
-# Provider comparison evidence and the example report are kept.
+# Provider comparison evidence, the example report and the repository audit are kept.
 !reports/provider_eval_*.json
 !reports/example_report.md
+!reports/final_repo_audit.md
 
 # Local model weights and HF cache if anyone points the embedder at a local path
 .cache/
