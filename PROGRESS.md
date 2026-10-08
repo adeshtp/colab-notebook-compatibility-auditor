@@ -4,16 +4,179 @@ Session handoff. Read this first, then the governance documents.
 
 ## Current state
 
-Provider evaluation is complete. **Groq `openai/gpt-oss-20b` is now the default
-provider**, selected by measurement. Ollama remains an offline option. 57 tests passing;
-the deterministic audit still needs no key.
+**Project complete.** 64 tests pass, 63 of them with no API key at all. The
+deterministic audit, evidence retrieval, one-call explanation and Streamlit UI are all
+built and verified end to end.
 
-The whole pipeline is one call:
+Locked provider decision: **Groq `openai/gpt-oss-20b`**, key from `GROQ_API_KEY`.
+Ollama `ministral-3:3b` retained as an offline mode.
 
 ```python
 from explainer import run_explanation
 result, evidence, explanation = run_explanation("notebook.ipynb", "2026.07")
 ```
+
+## Session 4 — UI and final verification
+
+### Files created
+
+```
+app/streamlit_app.py        UI only, no analysis logic
+tests/test_app.py           6 tests driving the real app via AppTest
+.streamlit/config.toml      local run config, gatherUsageStats off
+.streamlit/secrets.example.toml
+reports/example_report.md   committed example report
+```
+
+### Files changed
+
+- `README.md` — rewritten for a reader who has not seen the project.
+- `ARCHITECTURE.md` — final pipeline, UI behaviour, retrieval behaviour.
+- `pyproject.toml` — `groq` moved into the `llm` extra, `ollama` into a `local` extra.
+- `.gitignore` — `.streamlit/secrets.toml`, local model caches.
+- `src/explainer.py` — two docstrings that still claimed Ollama was the default.
+- `PROGRESS.md` — this section.
+
+### Measured final facts
+
+**Archive verification, deterministic only, no LLM:**
+
+```
+notebooks audited : 83
+parse/runtime failures : 0
+statuses : 66 ATTENTION, 17 READY
+rules   : R002 112, R004 108, R003 59, R001 0, R005 0
+```
+
+R001 and R005 fire zero times because none of the archived notebooks pins a version.
+That is a property of the corpus, not a defect.
+
+**Case A — `mismatching_pin.ipynb` vs `2026.07`, 1 Groq call:**
+
+```
+status HIGH_RISK | findings [('R001','numpy','HIGH')] | deps 2
+evidence {'R001': 3} | elapsed 2.31s | unexplained []
+versions 1.24.3 and 2.0.2 both preserved in the explanation
+```
+
+The model noted the retrieved evidence does not itself state 2026.07's numpy version,
+which is faithful: that chunk does not contain it.
+
+**Case B — `unpinned_package.ipynb` vs `2026.07`, 1 Groq call:**
+
+```
+status ATTENTION | findings [('R002','opendatasets','ATTENTION'),
+                             ('R004','opendatasets','UNKNOWN')]
+evidence {'R002': 3, 'R004': 3} | elapsed 2.45s | unexplained []
+```
+
+**Archive notebook — `fraud_detection_ad.ipynb` vs `2026.07`, 1 Groq call:**
+
+```
+status ATTENTION | 6 findings across R002, R003, R004
+evidence {R002: 3, R003: 3, R004: 3} | elapsed 1.73s | unexplained []
+```
+
+**Degraded path, no `GROQ_API_KEY`, LLM stage requested:**
+
+```
+status HIGH_RISK | findings [('R001','HIGH','numpy')] | deps 2
+evidence {'R001': 3} | explanation None
+```
+
+The audit stays fully usable with no key.
+
+### Test result
+
+```
+63 passed, 1 deselected   # -m "not integration", no API key
+64 passed                 # full suite, includes one live Groq call
+```
+
+The single live call is marked `integration`. No test requires a key to pass.
+
+### Intermittent Groq failure found during final verification
+
+The first full-suite run failed the integration test with Agno logging
+`All parsing attempts failed`. Reproduced investigation: 8 consecutive isolated
+integration runs passed, then 3 consecutive full-suite runs passed. Counting every live
+Groq call made in this session, that is **1 failure in roughly 14 calls**, followed by
+11 consecutive successes.
+
+This is a real reliability characteristic, not a flake to be dismissed. It matches what
+`AI_PROVIDER.md` already warned about: Agno reports
+`supports_native_structured_outputs = False` for Groq, so the response schema is
+advisory rather than enforced server-side.
+
+The product consequence is bounded and was verified: a parse failure raises inside
+`explain()`, the app catches it, sets `llm_status = "failed"`, and shows "AI explanation
+unavailable. Deterministic audit completed successfully." The audit and the evidence are
+untouched. That is the degradation path doing its job.
+
+It is also why the deterministic core never depends on this call.
+
+### Streamlit verification
+
+`streamlit run app/streamlit_app.py` serves HTTP 200 with no app-side exceptions.
+The full flow is covered by `tests/test_app.py` using Streamlit's own `AppTest`,
+including the no-key path rendering `HIGH_RISK` and `R001`.
+
+A first attempt at these tests loaded the app module via an AST filter so it could be
+tested without a server. That was fragile and was replaced with `AppTest`, which drives
+the real app.
+
+### Files and counts for the record
+
+| Session 2 tests | 34 |
+| Session 3 tests | 19 |
+| Provider evaluation tests | 4 |
+| Session 4 tests | 6 |
+| **Total** | **63 without a key, 64 with the integration call** |
+
+| Fact | Value |
+|---|---|
+| Deterministic rules | R001–R006 active, R007 defined but inactive |
+| Agno | `3.1.1` |
+| Embedding model | `sentence-transformers/all-MiniLM-L6-v2` |
+| Vector store | local LanceDB, rebuilt from 5 committed sources |
+| Curated sources | 5, all official, all `SOURCE_FACT` |
+| Runtime snapshots | 5, pinned commits |
+| Provider | Groq `openai/gpt-oss-20b` |
+| Offline provider | Ollama `ministral-3:3b` |
+| Gemini | evaluated, rejected: one 503 of two requests, versions abstracted away |
+| LLM calls per audit | 1 |
+
+### Honest limits of everything measured
+
+1. The provider comparison was two cases per provider. It is an engineering selection.
+   **No accuracy percentage, win rate or statistical claim is made anywhere.**
+2. Groq's structured output failed 1 call in roughly 14 observed, and the schema is not
+   server-enforced. See the section above.
+3. Ollama coverage varied between runs on the same case. Local model output is not
+   deterministic.
+4. Latency was measured on one machine with a warm embedding cache.
+5. `READY` is not a guarantee. Nothing in this project has executed any notebook.
+6. Streamlit Community Cloud readiness is an assessment. Nothing has been deployed.
+7. The example report uses a committed test fixture rather than a private notebook, so
+   no private content is published.
+
+### Known limitations of the project
+
+1. Regex parsing, not `ast`: an `import` in a comment is read as a dependency.
+2. Six-entry import-to-distribution map; unmapped mismatches give a false `UNKNOWN`.
+3. Snapshot data can lag a live runtime by one to two days, per Google's own README.
+4. `git+` references carry no version and are treated as absent.
+5. Retrieval relevance is not scored numerically.
+6. Five small documents cannot explain third-party breaking changes.
+7. Groq is a hosted dependency; the offline mode is slower and less complete.
+
+### Security check performed
+
+Searched the repository for `gsk_`, `sk-`, `sk-or-v1`, `AQ.Ab` and key assignments:
+**no credential values are tracked.** Secret names appear only as variable references in
+docs and `src/explainer.py`. `.gitignore` covers `.env`, `.streamlit/secrets.toml`,
+`data/lancedb/`, `inbox/` and local model caches. The key is read at runtime from the
+environment or Streamlit secrets and is never displayed.
 
 ## Provider evaluation session (2026-10-08)
 
@@ -222,24 +385,22 @@ marked `integration` and skips itself when Ollama is not reachable.
    parsing, six-entry import-to-distribution map, `git+` references in `pip-freeze.txt`
    treated as absent.
 
-## Next session objective
+## Project status: complete
 
-**SESSION 4 — UI + FINAL VERIFICATION.** Deterministic core, explanation layer and
-provider decision are all settled and must not be rewritten.
+All four sessions are finished and verified. No further development session is planned.
 
-1. `app/streamlit_app.py`: upload `.ipynb`, select runtime snapshot, show notebook
-   summary, detected dependencies, findings, overall status, recommended checks,
-   evidence with sources, and limitations. No analysis logic in the UI.
-2. Graceful provider failure: show `llm_status` and keep the deterministic report.
-   `explainer.ProviderError` already gives the real reason.
-3. Record `llm_provider`, `llm_model`, `llm_status` on every rendered report.
-4. Read `GROQ_API_KEY` from the environment, never from a tracked file.
-5. Representative notebook end-to-end runs.
-6. README final pass, an example report committed under `reports/`.
-7. Full validation: notebook never executed, no secrets, all tests pass, provider
-   documented, UNKNOWN works, evidence visible, claims match behaviour.
+Optional future work, none of it started and none of it required:
 
-Do not add new rules or new knowledge sources.
+- Add third-party package documentation as a Tier 3 source if explaining breaking
+  changes ever becomes a goal.
+- Replace regex parsing with `ast`, which would remove the comment false positive.
+- Widen the import-to-distribution map.
+- Add a larger hand-labelled rule evaluation set and report measured precision and
+  recall. Not done deliberately: with one labelled set and 83 unlabelled notebooks,
+  any accuracy figure would be an invention.
+
+Do not add new rules, new knowledge sources, or new providers without updating
+`PROJECT_SPEC.md` and `RULES.md` first.
 
 ## Verified environment
 

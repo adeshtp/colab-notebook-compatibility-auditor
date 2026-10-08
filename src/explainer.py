@@ -1,4 +1,4 @@
-"""One local Agno call turns deterministic findings plus retrieved evidence into prose.
+"""One Agno call turns deterministic findings plus retrieved evidence into prose.
 
 The model explains. It never decides. Rule, package, severity, status, message and
 cell all come from the deterministic stage and are passed through untouched.
@@ -78,9 +78,10 @@ class ExplanationResult(BaseModel):
 def build_model(provider: str = DEFAULT_PROVIDER, model: str = DEFAULT_MODEL):
     """Return the configured model.
 
-    Plain configuration-driven selection. Ollama is the local default and needs no
-    API key. Groq and Gemini are hosted alternatives that read their key from the
-    environment. Unknown provider names are rejected rather than guessed at.
+    Plain configuration-driven selection, no factory or registry. Groq is the
+    default and reads GROQ_API_KEY from the environment. Ollama is the offline
+    local mode and needs no key. Unknown provider names are rejected rather than
+    guessed at.
     """
     if provider == "ollama":
         return Ollama(id=model, host=DEFAULT_HOST, options={"num_predict": MAX_TOKENS})

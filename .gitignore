@@ -1,6 +1,7 @@
 # Secrets and local config
 .env
 .env.*
+.streamlit/secrets.toml
 
 # Raw notebook archive. Read-only input material, not part of the project.
 inbox/
@@ -15,14 +16,20 @@ venv/
 build/
 dist/
 
-# Generated RAG index and run artefacts
+# Generated RAG index and run artefacts. The index is always rebuilt from the
+# committed curated sources, so it is never tracked.
 data/index/
 data/lancedb/
 reports/*.json
 reports/*.jsonl
 
-# Provider comparison evidence is kept, unlike other report output.
+# Provider comparison evidence and the example report are kept.
 !reports/provider_eval_*.json
+!reports/example_report.md
+
+# Local model weights and HF cache if anyone points the embedder at a local path
+.cache/
+*.gguf
 
 # Notebooks
 .ipynb_checkpoints/

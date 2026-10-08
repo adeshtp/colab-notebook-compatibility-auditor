@@ -5,23 +5,26 @@
 ```
 .ipynb
   ↓
-notebook_parser.extract_dependencies   (deterministic, JSON only)
+notebook_parser.extract_dependencies   deterministic, JSON only, never executed
   ↓
-runtime_checker.load_snapshot          (deterministic, local snapshot files)
+runtime_checker.load_snapshot          deterministic, vendored data/runtimes/
   ↓
-rules.audit_notebook → AuditResult     (deterministic R001–R006, plain functions)
+rules.audit_notebook → AuditResult     deterministic R001–R006, plain functions
   ↓
-knowledge_base.retrieve                (deterministic, one search per distinct rule)
+knowledge_base.retrieve                deterministic, one search per distinct rule
   ↓
-explainer.explain                      (ONE local Agno call, structured output)
+explainer.explain                      ONE Groq call, structured output
   ↓
-ExplanationResult                      (prose only, held separately)
+ExplanationResult                      prose only, held separately
   ↓
-UI                                    (Session 4)
+app/streamlit_app.py                   renders all three in order
 ```
 
-Retrieval is a direct Python call. There is no agentic search: the model never
-decides whether to search, what to search, or which findings exist.
+Optional: `COLABAUDIT_LLM_PROVIDER=ollama` gives a fully offline explanation step with
+no API key.
+
+Retrieval is a direct Python call. There is no agentic search: the model never decides
+whether to search, what to search, or which findings exist.
 
 ## Responsibility boundary
 
@@ -64,14 +67,15 @@ beyond the Pydantic models, no factories, and no interfaces.
 | `src/rules.py` | R001–R006 and status aggregation, plus the `audit_notebook` entry point. |
 | `src/knowledge_base.py` | Ingest the curated sources, embed with SentenceTransformer, store in local LanceDB, retrieve. |
 | `src/explainer.py` | Build the evidence prompt and make the single Agno call. Provider construction lives here. |
-| `app/streamlit_app.py` (Session 4) | Streamlit UI only. No analysis logic. |
+| `app/streamlit_app.py` | Streamlit UI. Presentation only, no analysis logic. |
 
 `rules.audit_notebook(notebook_path, snapshot)` is the whole deterministic stage: one
 function, plain data in, plain data out. `explainer.run_explanation` chains the audit,
-the retrieval and the one model call.
+the retrieval and the one model call. The app calls those and renders the result.
 
 Nothing under `src/` is a class except the Pydantic models. No factories, no
-dependency injection, no service layer.
+dependency injection, no service layer, no plugin registry. Provider selection is a
+plain `if` in `explainer.build_model`.
 
 ## Request budget
 
@@ -120,6 +124,27 @@ accident.
 - Agno 3.1.1 does not expose the raw similarity score on the returned `Document`, so
   results carry `rank` rather than a fabricated score.
 - Retrieval relevance is not scored numerically anywhere in this project.
+- The Streamlit app calls `build_knowledge(rebuild=True)` once inside
+  `st.cache_resource`, so the index is not rebuilt on every rerun and is always
+  recreated from the five committed curated sources. A Streamlit Community Cloud
+  filesystem is not durable, so the index is treated as rebuildable, never as
+  persistent state.
+
+## UI behaviour
+
+The app renders three visually separated sections in pipeline order:
+
+1. **Detected by auditor** — dependencies and findings from `rules.py`. Authoritative.
+2. **Retrieved evidence** — source title, URL and chunk text, shown before any AI text.
+3. **AI-generated explanation** — `ExplanationResult`, labelled with provider, model
+   and status.
+
+There is no chat interface and no free-text input. The user uploads a file and selects
+a runtime; the app never accepts questions.
+
+`llm_status` is one of `ok`, `disabled`, `not_configured` or `failed`. A raw exception
+is reduced to its type name for display; the underlying `ProviderError` text is kept
+in a caption for debugging.
 
 ## Degradation behaviour
 

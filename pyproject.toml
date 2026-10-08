@@ -9,10 +9,16 @@ description = "Static compatibility risk auditing for old Google Colab notebooks
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
+# Groq is the default explanation provider, so `groq` is not optional in practice.
 llm = [
     "agno>=3.1,<4",
+    "groq>=0.30",
     "lancedb>=0.40",
     "sentence-transformers>=6.1",
+    "openai>=3",
+]
+# Only needed for the offline mode.
+local = [
     "ollama>=0.6",
 ]
 ui = ["streamlit>=1.65"]
@@ -23,5 +29,6 @@ where = ["src"]
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 testpaths = ["tests"]
-# Local RAG tests build a real LanceDB index; the live model call is integration only.
-markers = ["integration: requires the local Ollama model to be running"]
+# RAG tests build a real local LanceDB index. Only the marked test makes a live
+# provider call, and it skips itself when the provider is unreachable.
+markers = ["integration: makes a live explanation-provider call"]

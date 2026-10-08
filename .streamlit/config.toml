@@ -1,0 +1,13 @@
+# Streamlit configuration for local runs.
+#
+# On Streamlit Community Cloud, set the same key under Settings -> Secrets instead:
+#
+#   GROQ_API_KEY = "gsk_..."
+#
+# Do not commit a secrets.toml. It is gitignored.
+
+[server]
+headless = true
+
+[browser]
+gatherUsageStats = false

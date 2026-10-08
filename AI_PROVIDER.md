@@ -83,10 +83,14 @@ records in `reports/provider_eval_<provider>.json`.
 
 ### Honest caveats about Groq
 
-- Agno reports `supports_native_structured_outputs = False` for Groq, so the schema is
-  not enforced server-side. It produced valid output on 2 of 2 calls, but this is not
-  a guarantee. `ExplanationResult.model_validate` is the safety net, and a validation
-  failure degrades to a deterministic-only report rather than a crash.
+- **Structured output is not schema-enforced.** Agno reports
+  `supports_native_structured_outputs = False` for Groq, so the schema is advisory. Across
+  roughly 14 live calls during the provider evaluation and final verification, **one call
+  failed** with Agno logging `All parsing attempts failed`, meaning the response could not
+  be parsed into `ExplanationResult`. The following 11 consecutive calls succeeded. So
+  treat this as roughly one failure in a dozen calls, not as a reliable guarantee.
+  This is the single strongest argument for the degradation path: a parse failure costs
+  the prose layer and nothing else.
 - Free-tier limits are per organisation, not per key.
 - A raw HTTP request to Groq with a default Python `urllib` User-Agent is blocked by
   Cloudflare with `error code: 1010`. Agno's client sends a normal User-Agent and is
@@ -94,6 +98,8 @@ records in `reports/provider_eval_<provider>.json`.
 - `gpt-oss-20b` is a reasoning model. It emitted no stray reasoning into the structured
   output in these runs, but that is a behaviour worth re-checking if output quality
   regresses.
+- Free-tier latency measured 1.4–2.5 s per call. No claim is made about paid-tier
+  behaviour or about behaviour under load.
 
 ### Why not Gemini
 
@@ -118,7 +124,8 @@ leaves R004 unexplained, and it pins the developer machine at 100% CPU for a min
 
 Two cases per provider is an engineering selection, not a benchmark. No accuracy
 figure, win rate or statistical claim is made. Groq's structured-output reliability was
-observed on 2 calls, not measured over many.
+observed on roughly 14 live calls and failed once, which is noted above rather than
+smoothed over.
 
 ## Session 3 verification (2026-10-08)
 
