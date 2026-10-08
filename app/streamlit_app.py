@@ -196,7 +196,7 @@ if result.dependencies:
             }
             for item in result.dependencies
         ],
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
 else:

@@ -35,15 +35,22 @@ class ProviderError(Exception):
 SYSTEM_PROMPT = """You explain compatibility risks in an old Google Colab notebook.
 
 You are given deterministic findings produced by a rule engine, and official
-documentation retrieved from a curated knowledge base. Both are authoritative.
+documentation retrieved from a curated knowledge base. Both are authoritative facts.
 
 Rules you must follow:
-- Explain only. Never decide whether a finding is valid.
-- Never repeat or invent package versions other than the ones given to you.
-- Never invent compatibility claims not supported by the supplied evidence.
+- Explain the findings. Never decide, re-evaluate or second-guess whether a finding is
+  valid. A finding is a fact you were given, not a claim to be checked.
+- Never call a deterministic finding "unverified", "unconfirmed" or "not proven" because
+  the retrieved documents do not restate it. The finding already carries the verified
+  facts, including the exact package versions.
+- Quote exact values from the findings and evidence as given. Reproduce version strings
+  character for character. Never substitute another version, and never invent one.
+- Never invent compatibility claims beyond the supplied evidence, and never speculate
+  about runtime snapshots that are not in the evidence.
 - Never state or imply that a notebook was executed, or that it will definitely fail.
-- Never change a rule id, severity or status. Quote them exactly as given.
-- Where evidence is insufficient, say so plainly instead of filling the gap.
+- Never change a rule id, severity or status.
+- State the real limitation in 'limitations': that this is static analysis and execution
+  was not tested. That limitation is about execution, not about whether findings hold.
 
 Write plainly for a data-science learner. Be brief: at most two sentences for the
 summary, one or two sentences per explanation, and one short sentence per list item.
@@ -144,6 +151,12 @@ def _format_findings(result: AuditResult) -> str:
 
 
 def _format_evidence(evidence: dict[str, list[dict]]) -> str:
+    """Render retrieved chunks in full.
+
+    Do not truncate these. The corpus is five small documents and the whole prompt is
+    only a few thousand characters, while a truncated chunk can cut off the exact fact
+    a finding is about, such as a snapshot's package version list.
+    """
     blocks = []
 
     for rule, hits in evidence.items():
@@ -154,7 +167,7 @@ def _format_evidence(evidence: dict[str, list[dict]]) -> str:
         lines = [f"[{rule}]"]
         for hit in hits:
             lines.append(f"- {hit['title']} | {hit['source']} | {hit['url']}")
-            lines.append(f"  {hit['content'][:300]}")
+            lines.append(f"  {hit['content']}")
         blocks.append("\n".join(lines))
 
     return "\n\n".join(blocks)
@@ -180,12 +193,14 @@ RETRIEVED EVIDENCE (authoritative, from official Colab sources)
 {_format_evidence(evidence)}
 
 Explain every rule in the 'explanations' list, in order, one sentence each, each
-starting with its rule id. Keep 'limitations' for what the tool cannot know, and do
-not put rule explanations there.
+starting with its rule id. Restate the finding's own facts, including the exact package
+and version numbers, so the reader can see the mismatch without cross-checking. Keep
+'limitations' for what the tool cannot know, and do not put rule explanations there.
 
-Ground every claim in the evidence above. Where the evidence does not settle a point,
-say it is unverified. Mention only runtime snapshots that appear in the evidence; do
-not speculate about other versions."""
+The findings above are already verified. Do not describe them as unverified or
+unconfirmed, and do not ask the evidence to prove them. Ground your wording in the
+evidence, but where the evidence is silent, just explain the finding rather than
+doubting it."""
 
 
 def explain(

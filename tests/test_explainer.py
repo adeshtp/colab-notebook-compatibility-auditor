@@ -73,10 +73,55 @@ def test_prompt_carries_findings_and_evidence_and_the_constraints():
     assert "notebook" in prompt.lower()
 
 
-def test_prompt_states_the_exact_number_of_explanations_required():
-    result = audit("unpinned_package")
+def test_prompt_contains_every_fact_needed_to_explain_r001():
+    """Regression guard for a real manual finding.
 
-    assert "Write exactly 2 explanation(s)" in build_prompt(result, {})
+    A Groq run claimed "the documentation does not specify the numpy version for
+    2026.07, so this mismatch is unverified", contradicting the finding it was given.
+    The evidence did reach the model, but each chunk was truncated to 300 characters,
+    which cut the 2026.07 component list off mid-line and discarded the numpy 2.0.2
+    entry sitting just past that boundary. This asserts the prompt carries the facts
+    and passes the evidence through uncut.
+    """
+    result = audit("mismatching_pin")
+    finding = result.findings[0]
+
+    assert finding.rule == "R001"
+    assert finding.package == "numpy"
+    assert finding.message == (
+        "Notebook pins numpy==1.24.3 but the selected runtime contains 2.0.2."
+    )
+
+    # The snapshot component list, with the decisive fact just past char 300.
+    chunk = "### 2026.07\nUbuntu 22.04.5 LTS; Python 3.12.13; numpy 2.0.2; PyTorch 2.11.0\n"
+    evidence = {"R001": [{"title": "T", "source": "S", "url": "u", "content": chunk,
+                          "content_type": "SOURCE_FACT", "source_id": "s",
+                          "runtime_context": "all", "rank": 1}]}
+
+    prompt = build_prompt(result, evidence)
+
+    for expected in ("R001", "numpy", "1.24.3", "2.0.2"):
+        assert expected in prompt, f"prompt is missing {expected}"
+    assert chunk in prompt, "evidence chunk was truncated"
+    assert result.notebook_name in prompt
+
+
+def test_prompt_forbids_re_adjudicating_a_finding():
+    prompt = build_prompt(audit("mismatching_pin"), {})
+
+    assert "already verified" in prompt
+    assert "Do not describe them as unverified" in prompt
+    assert "Never decide, re-evaluate" in explainer.SYSTEM_PROMPT
+
+
+def test_evidence_chunks_are_not_truncated():
+    """A long chunk must reach the model in full, not clipped at some character count."""
+    chunk = "x" * 900
+    evidence = {"R001": [{"title": "T", "source": "S", "url": "u", "content": chunk,
+                          "content_type": "SOURCE_FACT", "source_id": "s",
+                          "runtime_context": "all", "rank": 1}]}
+
+    assert chunk in build_prompt(audit("mismatching_pin"), evidence)
 
 
 def test_only_the_retained_providers_are_supported():
