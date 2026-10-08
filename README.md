@@ -8,7 +8,8 @@ Status: **Session 2 complete.** The deterministic core works and is tested. The 
 
 Give it an old Colab notebook and a runtime snapshot. It parses the notebook as JSON,
 extracts package references, and compares them against the real pre-installed package
-set published by Google for that runtime. Findings are deterministic, not guessed.
+set published by Google for that runtime. Findings are deterministic, not guessed. A
+local model then explains those findings using official Colab documentation.
 
 ```python
 from rules import audit_notebook
@@ -45,15 +46,47 @@ for finding in result.findings:
 `READY` means "no obvious risk detected by the implemented checks". It is not a
 guarantee that the notebook runs.
 
+## Evidence and explanation
+
+After the audit, evidence is retrieved from a small curated corpus of official Colab
+sources and one local model call turns it into prose.
+
+```bash
+export COLABAUDIT_LLM_ENABLED=1
+```
+
+```python
+from explainer import run_explanation
+
+result, evidence, explanation = run_explanation("my_old_notebook.ipynb", "2026.07")
+
+print(result.status)          # computed deterministically, never by the model
+print(evidence["R001"][0]["url"])   # inspectable before any model call
+print(explanation.summary)
+```
+
+Retrieval is a direct Python call. The model never decides whether to search, what to
+search, or which findings exist. One audit means one model call.
+
+The explanation model cannot alter a finding: `ExplanationResult` has no version,
+severity or status field, and `AuditResult` has no explanation field, so the two cannot
+merge.
+
+Provider: local Ollama, `ministral-3:3b`. No API key. See `AI_PROVIDER.md`.
+
 ## Running the tests
 
 ```bash
 python -m venv .venv
 .venv/bin/pip install pydantic pytest
-.venv/bin/python -m pytest
+.venv/bin/pip install agno==3.1.1 lancedb sentence-transformers ollama openai
+.venv/bin/python -m pytest -m "not integration"   # no LLM needed
+.venv/bin/python -m pytest                        # includes the live local model test
 ```
 
-No API key is needed. Nothing in the deterministic core imports a model provider.
+No API key is needed for any test. The RAG tests build a real local LanceDB index, so
+the first run takes about a minute while the embedding model is downloaded. The single
+live model call is marked `integration` and skips itself if Ollama is not running.
 
 ## Governance documents
 
@@ -76,8 +109,11 @@ Pinned Colab runtime package data lives in `data/runtimes/`. Each snapshot is ve
 ## Planned workflow
 
 ```
-.ipynb → safe JSON parsing → dependency extraction → deterministic rules   [done]
-       → RAG over official Colab docs → Agno structured report → Streamlit UI   [later]
+.ipynb → parsing → extraction → deterministic rules            [done]
+       → retrieval from official Colab docs                     [done]
+       → one local Agno explanation call                        [done]
+       → Streamlit UI                                           [Session 4]
 ```
 
-Notebooks are parsed as data and are never executed.
+Notebooks are parsed as data and are never executed. The explanation model runs
+entirely on your machine.

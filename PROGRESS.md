@@ -4,13 +4,144 @@ Session handoff. Read this first, then the governance documents.
 
 ## Current state
 
-Session 2 (Deterministic Core) is complete. 34 tests passing, no LLM key required.
+Session 3 (RAG + Agno Explanation Layer) is complete. 53 tests passing, no LLM key required.
 
-The deterministic stage is one call: `rules.audit_notebook(notebook_path, snapshot)`.
+The whole pipeline is one call:
+
+```python
+from explainer import run_explanation
+result, evidence, explanation = run_explanation("notebook.ipynb", "2026.07")
+```
+
+## Session 3 — what was built
+
+### Files created
 
 ```
-.venv/bin/python -c "import sys; sys.path.insert(0,'src'); from rules import audit_notebook; print(audit_notebook('tests/fixtures/mismatching_pin.ipynb','2026.07').status)"
+src/knowledge_base.py    build_knowledge, load_sources, ingest, retrieve
+src/explainer.py         build_model, build_query_for, distinct_findings,
+                         collect_evidence, build_prompt, explain,
+                         unexplained_rules, is_llm_enabled, run_explanation
+tests/test_knowledge_base.py
+tests/test_explainer.py
 ```
+
+### Files changed
+
+- `ARCHITECTURE.md` — real pipeline, request budget, evidence separation, degradation.
+- `AI_PROVIDER.md` — Session 3 verification table and the four defects found while running it.
+- `README.md` — evidence and explanation section, install and test instructions.
+- `pyproject.toml` — registered the `integration` marker.
+- `PROGRESS.md` — this section.
+
+**No Session 2 file was modified.** `models.py`, `notebook_parser.py`,
+`runtime_checker.py`, `rules.py` and their three test files are untouched. Verified with
+`git diff --stat HEAD~1` showing no changes to those paths.
+
+### Dependencies added
+
+```
+agno==3.1.1
+lancedb==0.40.0
+sentence-transformers==6.1.0
+torch==2.14.1            (pulled in by sentence-transformers)
+transformers==5.19.0
+ollama==0.6.3
+openai==3.26.1           (required transitively by agno.models.ollama, no key used)
+```
+
+### Versions actually used
+
+| Component | Version / model |
+|---|---|
+| Agno | `3.1.1` |
+| Embeddings | `sentence-transformers/all-MiniLM-L6-v2` |
+| Vector store | local LanceDB at `data/lancedb/` |
+| LLM | Ollama `ministral-3:3b` |
+| API key required | **No** |
+
+### Defects found and fixed while verifying
+
+1. **Agno `Document` API drift.** `Document` has `meta_data`, not `metadata`, and
+   exposes no `score` field in 3.1.1. Retrieval now carries `rank` instead of inventing
+   a similarity number.
+2. **Chunking swallowed the body text.** Default chunk size treated each 2-3 KB source
+   as one chunk, so retrieved content was mostly YAML front matter. Fixed with
+   `MarkdownReader(chunk_size=600)`.
+3. **`agno.models.ollama` imports `agno.models.openai`.** The `openai` package must be
+   installed even though no OpenAI account, key or request is involved.
+4. **Uncapped generation produced invalid JSON.** The 3B model ran past 300 and then
+   past 800 tokens and returned truncated, unparseable JSON both times. Fixed with
+   `options={"num_predict": 700}` plus explicit brevity instructions in the schema field
+   descriptions.
+
+### Local model result
+
+The local model works. It returns valid structured output grounded in the retrieved
+evidence, quotes the rule ids correctly, and marks unverified points as unverified. It
+also produced one overreach: in the first run it claimed evidence "confirms 2026.07's
+runtime explicitly lists numpy 2.0.2", which the retrieved chunk did not say. The prompt
+now instructs the model to mention only snapshots present in the evidence.
+
+### Test result
+
+```
+53 passed in 107s          # full suite
+52 passed, 1 deselected   # -m "not integration", no LLM, no Ollama needed
+```
+
+Deterministic tests still pass with no key and no model. The one live model call is
+marked `integration` and skips itself when Ollama is not reachable.
+
+### End-to-end demo
+
+`tests/fixtures/mismatching_pin.ipynb` against snapshot `2026.07`, **1 LLM call**:
+
+- Deterministic: `HIGH_RISK`, R001, HIGH, numpy, cell 0, unchanged after the call.
+- Evidence: 3 chunks, all from `colab-runtime-version-faq`, URLs preserved, inspectable
+  before the call.
+- Query built deterministically: `"R001 numpy Notebook pins numpy==1.24.3 but the
+  selected runtime contains 2.0.2."`
+- Model output: summary plus an explanation of R001 quoting the rule id and both
+  versions exactly as given, one recommendation, one limitation.
+- `unexplained_rules` returned `[]`.
+
+### Known limitations
+
+1. **The 3B model does not reliably explain every rule.** On a two-rule notebook
+   (R002 + R004) it explained R002 and moved the R004 discussion into `limitations`,
+   even after the field descriptions were tightened. `explainer.unexplained_rules`
+   reports this gap deterministically rather than hiding it. A stronger local model
+   would fix it; that is a model-quality limit, not a pipeline one.
+2. **One LLM call takes 1-2 minutes on CPU.** Acceptable for a portfolio demo, too slow
+   for a tight loop.
+3. **Retrieval relevance is not scored numerically.** Agno 3.1.1 does not expose the
+   similarity score, so results are only ordered, and no retrieval metric is claimed.
+4. **The corpus is 5 small documents.** It answers questions about Colab runtime
+   versioning and `/content/` paths. It cannot explain a specific third-party package's
+   breaking changes; those need a Tier 3 source that this project has not added.
+5. **The 83-notebook archive was not run through the LLM.** By design. Only
+   deterministic verification was repeated on it.
+6. **Session 2 limitations still stand** and are unchanged: regex rather than `ast`
+   parsing, six-entry import-to-distribution map, `git+` references in `pip-freeze.txt`
+   treated as absent.
+
+## Next session objective
+
+**SESSION 4 — UI + FINAL VERIFICATION.** Deterministic core and explanation layer are
+both done and must not be rewritten.
+
+1. `app/streamlit_app.py`: upload `.ipynb`, select runtime snapshot, show notebook
+   summary, detected dependencies, findings, overall status, recommended checks,
+   evidence with sources, and limitations. No analysis logic in the UI.
+2. Graceful provider failure: show `llm_status` and keep the deterministic report.
+3. Record `llm_provider`, `llm_model`, `llm_status` on every rendered report.
+4. Representative notebook end-to-end runs.
+5. README final pass, an example report committed under `reports/`.
+6. Full validation: notebook never executed, no secrets, all tests pass, free provider
+   documented, UNKNOWN works, evidence visible, claims match behaviour.
+
+Do not add new rules or new knowledge sources.
 
 ## Verified environment
 
@@ -185,16 +316,8 @@ version pins, so there is nothing for R001 to mismatch.
 
 Do not start the Streamlit UI in Session 3.
 
-## Next session objective
+## Archived: Session 2 objective (complete)
 
-**SESSION 2 — DETERMINISTIC CORE.** Must run with no LLM API key.
-
-1. `src/colab_audit/models.py`: Pydantic models — `RuntimeSnapshot`, `Requirement`, `Finding`, `EvidenceItem`, `CompatibilityReport`. Include `origin` on findings to keep RULE / EVIDENCE / EXPLANATION separate.
-2. `src/colab_audit/parsing.py`: validate and read `.ipynb` JSON. Never execute. Size limit, schema check, clear errors.
-3. `src/colab_audit/extraction.py`: parse `pip install` (including bare `pip install` without `!`), `import`/`from`, standard-library exclusion list, import-to-distribution mapping (`sklearn`→`scikit-learn`, `cv2`→`opencv-python`, `bs4`→`beautifulsoup4`, `PIL`→`pillow`, `langchain_core`→`langchain-core`), cell index tracking.
-4. `src/colab_audit/runtime.py`: load vendored snapshots. Handle `name==version`, PEP 440 direct references, and normalisation (`_` vs `-` vs `.`, case).
-5. `src/colab_audit/rules.py`: R001-R007 as pure functions plus status aggregation.
-6. `tests/fixtures/`: the 10 required notebooks — clean, matching pin, mismatching pin, unpinned, multiple installs, conflicting installs, `/content/` usage, unknown package, malformed install, harmless text mentioning package names.
-7. `tests/`: extraction, version parsing, runtime comparison, rules, UNKNOWN handling, report serialisation.
-
-Do not start the RAG or Agno layer in Session 2.
+Superseded by the Session 2 section above. Session 2 delivered all of it:
+`src/models.py`, `src/notebook_parser.py`, `src/runtime_checker.py`, `src/rules.py`,
+8 fixtures, and 34 tests.

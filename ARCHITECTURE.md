@@ -1,28 +1,27 @@
 # ARCHITECTURE.md
 
-## Workflow
+## Workflow as built
 
 ```
-USER
+.ipynb
   ↓
-Streamlit
+notebook_parser.extract_dependencies   (deterministic, JSON only)
   ↓
-Notebook Parser          (deterministic, JSON only)
+runtime_checker.load_snapshot          (deterministic, local snapshot files)
   ↓
-Dependency Extraction    (deterministic, regex/AST-free text parsing)
+rules.audit_notebook → AuditResult     (deterministic R001–R006, plain functions)
   ↓
-Runtime Metadata Loader  (deterministic, local snapshot files)
+knowledge_base.retrieve                (deterministic, one search per distinct rule)
   ↓
-Deterministic Risk Rules (deterministic, pure functions)
+explainer.explain                      (ONE local Agno call, structured output)
   ↓
-RAG Evidence Retrieval   (embeddings + LanceDB, local curated docs)
+ExplanationResult                      (prose only, held separately)
   ↓
-Agno Agent               (one LLM call, structured output)
-  ↓
-Pydantic Structured Report
-  ↓
-UI
+UI                                    (Session 4)
 ```
+
+Retrieval is a direct Python call. There is no agentic search: the model never
+decides whether to search, what to search, or which findings exist.
 
 ## Responsibility boundary
 
@@ -63,12 +62,29 @@ beyond the Pydantic models, no factories, and no interfaces.
 | `src/notebook_parser.py` | Read `.ipynb` as JSON, extract pip installs and imports. Never execute. |
 | `src/runtime_checker.py` | Load a vendored snapshot from `data/runtimes/`, look up package versions. |
 | `src/rules.py` | R001–R006 and status aggregation, plus the `audit_notebook` entry point. |
-| `src/knowledge/` (Session 3) | Curated source ingestion, embeddings, LanceDB vector store. |
-| `src/llm.py` (Session 3) | Provider construction isolated from application logic. One Agno call. |
+| `src/knowledge_base.py` | Ingest the curated sources, embed with SentenceTransformer, store in local LanceDB, retrieve. |
+| `src/explainer.py` | Build the evidence prompt and make the single Agno call. Provider construction lives here. |
 | `app/streamlit_app.py` (Session 4) | Streamlit UI only. No analysis logic. |
 
 `rules.audit_notebook(notebook_path, snapshot)` is the whole deterministic stage: one
-function, plain data in, plain data out.
+function, plain data in, plain data out. `explainer.run_explanation` chains the audit,
+the retrieval and the one model call.
+
+Nothing under `src/` is a class except the Pydantic models. No factories, no
+dependency injection, no service layer.
+
+## Request budget
+
+One audit produces **one** LLM call. Retrieval happens before it.
+
+- `explainer.distinct_findings` collapses repeated rules, so a notebook with 40 R002
+  findings needs one search and one explanation slot, not 40.
+- `collect_evidence` issues one `knowledge.search` per distinct rule, capped at 3
+  chunks each.
+- The prompt carries findings, evidence and limitations. Full notebook source is never
+  sent.
+- Generation is capped at 700 tokens. A 3B model on CPU will otherwise ramble past the
+  token limit and return unparseable JSON.
 
 ## Active rules
 
@@ -81,17 +97,41 @@ Reconsider it only if a distinct user-facing need appears.
 
 ## Evidence separation
 
-`Finding` objects carry `origin`:
+Three kinds of content, three separate types:
 
-- `RULE` — produced by deterministic code, with `rule_id`
-- `EVIDENCE` — retrieved document snippet with `source`, `title`, `url`, `runtime_context`
-- `EXPLANATION` — model-generated prose, marked as such and never merged into `deterministic_findings`
+- `Finding` (`models.py`) — produced by `rules.py`. Holds `rule`, `package`, `severity`,
+  `status`, `message`, `cell`. **Read-only to the model.**
+- Evidence (`knowledge_base.retrieve` returns plain dicts) — retrieved chunk with
+  `source_id`, `source`, `title`, `url`, `content_type`, `runtime_context`, `content`,
+  `rank`. Inspectable before any model call.
+- `ExplanationResult` (`explainer.py`) — model prose only. Its fields are `summary`,
+  `explanations`, `recommendations`, `limitations`. It has no version, severity or
+  status field, so the model **structurally cannot** write back into a finding.
 
-The three origins are stored in separate report fields so the model cannot blur them.
+`AuditResult` has no `summary` or explanation field. The two types cannot merge even by
+accident.
+
+## Retrieval behaviour
+
+- Chunk size 600 with `MarkdownReader`, so a retrieved chunk is the relevant section
+  rather than a whole document.
+- `Knowledge.insert(path=..., skip_if_exists=True)`; `build_knowledge(rebuild=True)`
+  clears a half-finished ingest from an interrupted run.
+- Agno 3.1.1 does not expose the raw similarity score on the returned `Document`, so
+  results carry `rank` rather than a fabricated score.
+- Retrieval relevance is not scored numerically anywhere in this project.
 
 ## Degradation behaviour
 
-- No LLM key configured → deterministic report is produced, `explanation` is empty, and a clear note is recorded. No error.
-- RAG retrieval returns nothing → `evidence` is empty and status becomes `UNKNOWN` per R006 where the conclusion depended on retrieval.
-- Provider error or rate limit → the failure is recorded in the report and surfaced in the UI. The architecture is not changed and no paid fallback is triggered.
-- No runtime snapshot selected → `audit_notebook` returns `UNKNOWN` with an R006 finding and the notebook-local dependency list. Nothing is guessed.
+- `COLABAUDIT_LLM_ENABLED` unset or `0` → `run_explanation` returns the audit and the
+  evidence with `None` for the explanation. The deterministic pipeline is the default.
+- Provider error or rate limit → `run_explanation` catches it and returns
+  `(result, evidence, None)`. The deterministic report is untouched. No provider
+  switching, no paid fallback, no architecture change.
+- RAG retrieval returns nothing for a rule → that rule's evidence list is empty and the
+  prompt records it as `(no evidence retrieved)`. The deterministic status is unchanged,
+  because retrieval never drives a finding.
+- No runtime snapshot selected → `audit_notebook` returns `UNKNOWN` with an R006
+  finding. Nothing is guessed.
+- The local model fails to explain every rule → `explainer.unexplained_rules` reports
+  the gap deterministically instead of hiding it.

@@ -2,7 +2,9 @@
 
 ## Purpose
 
-Isolate LLM provider selection from application logic. Nothing in `parsing.py`, `extraction.py`, `runtime.py`, `rules.py`, or `models.py` may import a provider SDK or read an API key.
+Isolate LLM provider selection from application logic. Only `explainer.py` may import a
+provider SDK or read an API key. `models.py`, `notebook_parser.py`,
+`runtime_checker.py`, `rules.py` and `knowledge_base.py` must never do so.
 
 ## Verified environment facts (checked 2026-10-08)
 
@@ -33,6 +35,33 @@ Reasoning:
 
 **Optional alternative: OpenRouter free tier.** Enabled only by setting the environment variables below. It requires a key. It is never selected automatically.
 
+## Session 3 verification (2026-10-08)
+
+Confirmed by actually running the pipeline, not by inspection:
+
+| Fact | Result |
+|---|---|
+| Agno version installed | `3.1.1` |
+| Ollama client | `ollama 0.6.3`, host `http://localhost:11434` |
+| `Ollama` native structured output | `supports_native_structured_outputs = True`, confirmed on the installed class |
+| Embeddings | `sentence-transformers/all-MiniLM-L6-v2`, downloaded from the HF Hub on first run, cached after that |
+| Vector store | local LanceDB at `data/lancedb/`, no cloud, no key |
+| LLM call time | roughly 1-2 minutes per call on CPU for a small explanation |
+| API key required | **No.** Nothing in the pipeline reads a key. |
+| Generation cap | 700 tokens, needed because a 3B model otherwise runs past the limit and returns unparseable JSON |
+
+### Defects found and fixed during verification
+
+1. `Document` in Agno 3.1.1 has `meta_data`, not `metadata`, and exposes no `score`
+   field. Retrieved results carry `rank` instead of a fabricated similarity number.
+2. Default chunking put each whole 2-3 KB source in one chunk, so front matter crowded
+   out the body text. `MarkdownReader(chunk_size=600)` fixes this.
+3. `agno.models.ollama` imports `agno.models.openai`, so the `openai` package must be
+   installed even when no OpenAI account or key is used. This is a transitive import in
+   Agno, not a second provider.
+4. Generation is capped at 700 tokens. Uncapped, the model produced 800+ tokens and
+   returned truncated, unparseable JSON.
+
 ## Configuration
 
 All configuration is by environment variable. No key is ever read from, or written to, tracked files.
@@ -60,13 +89,20 @@ Current state: **no API key is needed.** The default provider is local Ollama.
 ## Request budget
 
 - One LLM call per analysis. Retrieval happens deterministically before the call.
-- One `Agent` instance reused across a session. No teams, no sub-agents, no tool loops.
-- Prompt is compact: notebook summary, runtime snapshot id, deterministic findings, and the top retrieved evidence snippets only. Full notebook source is never sent.
-- No retry loop beyond Agno's default. On rate limit or provider error, the failure is recorded in the report and the deterministic report is returned unchanged.
+- One `Agent` instance per call, no teams, no sub-agents, no tool loops.
+- Findings are deduplicated by rule before retrieval, so 40 R002 findings cost one
+  search and one explanation slot.
+- Prompt is compact: snapshot id, deterministic findings, and up to 3 evidence chunks
+  per distinct rule. Full notebook source is never sent.
+- No retry loop. On provider error the failure is recorded and the deterministic report
+  is returned unchanged.
 
 ## Provider metadata in output
 
-Every report records `llm_provider` and `llm_model`, plus `llm_status`, one of `not_configured`, `ok`, or `failed` with the error message. Run metadata is written next to the report.
+`explainer.DEFAULT_PROVIDER` and `explainer.DEFAULT_MODEL` record which provider and
+model are configured, and `run_explanation` returns the audit result, the evidence and
+the explanation separately, so the caller records `llm_status` as `not_configured`,
+`ok` or `failed` alongside them. Session 4 renders that in the UI.
 
 ## Configuration examples
 
