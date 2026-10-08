@@ -1,0 +1,28 @@
+# Secrets and local config
+.env
+.env.*
+
+# Raw notebook archive. Read-only input material, not part of the project.
+inbox/
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+*.egg-info/
+build/
+dist/
+
+# Generated RAG index and run artefacts
+data/index/
+data/lancedb/
+reports/*.json
+reports/*.jsonl
+
+# Notebooks
+.ipynb_checkpoints/
+
+# macOS
+.DS_Store
