@@ -1,9 +1,12 @@
 """Tests for the explanation layer.
 
-Everything except the final marked test runs without an LLM. The explanation layer
-must never be able to alter a deterministic field, and that is checked structurally
-rather than on exact model wording.
+Nothing here calls a provider by default. The single live test is opt-in via
+RUN_OLLAMA_TESTS=1 and names its provider explicitly. The explanation layer must
+never be able to alter a deterministic field, and that is checked structurally rather
+than on exact model wording.
 """
+
+import os
 
 import pytest
 
@@ -167,18 +170,24 @@ def test_explanation_cannot_alter_deterministic_findings():
 
 
 @pytest.mark.integration
-def test_local_model_produces_a_structurally_valid_explanation(monkeypatch):
-    """Live local model call. Skipped automatically when Ollama is not running."""
+def test_ollama_produces_a_structurally_valid_explanation(monkeypatch):
+    """Live local model call against Ollama.
+
+    Opt-in via RUN_OLLAMA_TESTS=1, because the normal suite must not call any
+    provider. The provider and model are passed explicitly rather than taken from
+    the application default, which is Groq and needs an API key.
+    """
     import urllib.error
     import urllib.request
+
+    if os.getenv("RUN_OLLAMA_TESTS") != "1":
+        pytest.skip("set RUN_OLLAMA_TESTS=1 to run the live Ollama test")
 
     host = explainer.DEFAULT_HOST
     try:
         urllib.request.urlopen(f"{host}/api/tags", timeout=3).read()
     except (urllib.error.URLError, TimeoutError):
         pytest.skip(f"local Ollama not reachable at {host}")
-
-    monkeypatch.setenv("COLABAUDIT_LLM_ENABLED", "1")
 
     result = audit("mismatching_pin")
     from knowledge_base import build_knowledge, ingest
@@ -187,7 +196,9 @@ def test_local_model_produces_a_structurally_valid_explanation(monkeypatch):
     ingest(knowledge)
     evidence = collect_evidence(knowledge, result)
 
-    explanation = explainer.explain(result, evidence)
+    explanation = explainer.explain(
+        result, evidence, provider="ollama", model="ministral-3:3b"
+    )
 
     # Structural validity only. Exact wording from a 3B model is not asserted.
     assert explanation.summary
