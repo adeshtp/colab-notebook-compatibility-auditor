@@ -487,3 +487,30 @@ def test_answered_is_a_plain_value_not_an_exception(knowledge):
 
     assert isinstance(result, Answered)
     assert result.answer is None
+
+def test_a_partial_model_response_still_yields_an_answer():
+    """A missing supplementary list must not throw away a usable answer.
+
+    Agno's structured output against Groq does not always return every declared
+    field. Losing the whole answer because 'follow_ups' was absent would be a poor
+    trade, so the supplementary lists default to empty.
+    """
+    payload = json.dumps({"answer": "Drive is mounted at /content/drive [1]."})
+
+    result = parse_answer(payload)
+
+    assert "/content/drive" in result.answer
+    assert result.used_sources == []
+    assert result.follow_ups == []
+    assert result.caveats == []
+
+
+def test_a_missing_used_sources_is_visible_rather_than_assumed():
+    """An absent attribution is reported as absent, never silently invented."""
+    parsed = parse_answer(json.dumps({"answer": "a [1]", "used_sources": ["1"]}))
+    passages = [passage("text", "src-one")]
+
+    used, unsupported = qa.resolve_used_sources(parsed, passages)
+
+    assert used == ["src-one"]
+    assert unsupported == []

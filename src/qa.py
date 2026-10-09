@@ -175,7 +175,14 @@ Rules you must follow:
 
 
 class AnswerResult(BaseModel):
-    """Model prose for one question. No findings, no severities, no statuses."""
+    """Model prose for one question. No findings, no severities, no statuses.
+
+    The three list fields default to empty because they are supplementary. Agno's
+    structured output against Groq does not always return every declared field, and
+    losing a whole usable answer because the model skipped 'follow_ups' would be a
+    poor trade. A missing list is reported as empty, which is the honest rendering of
+    "the model did not say".
+    """
 
     answer: str = Field(
         description=(
@@ -185,6 +192,7 @@ class AnswerResult(BaseModel):
         )
     )
     used_sources: list[str] = Field(
+        default_factory=list,
         description=(
             "source_id values of the passages actually used, copied exactly from the "
             "passage headers, e.g. 'colab-runtime-version-faq'. Never passage numbers. "
@@ -192,9 +200,11 @@ class AnswerResult(BaseModel):
         )
     )
     follow_ups: list[str] = Field(
-        description="At most two related questions this corpus could plausibly answer."
+        default_factory=list,
+        description="At most two related questions this corpus could plausibly answer.",
     )
     caveats: list[str] = Field(
+        default_factory=list,
         description=(
             "At most three short sentences on limits of the retrieved evidence itself, "
             "for example that published package data can lag a live runtime."
