@@ -64,6 +64,22 @@ def load_sources(sources_dir: Path | str = SOURCES_DIR) -> list[dict]:
     return sources
 
 
+def strip_front_matter(text: str) -> str:
+    """Return a source document's body, without its YAML front matter block.
+
+    The front matter duplicates the title and URL, both of which are already stored
+    as searchable metadata on every chunk. Leaving it in the indexed text means a
+    chunk of nothing but `source_id: colab-runtime-version-faq` can be embedded and
+    ranked, which is noise in retrieval rather than evidence. Stripping it keeps the
+    embedded text equal to the prose that actually answers questions.
+    """
+    if not text.startswith("---"):
+        return text
+
+    parts = text.split("---", 2)
+    return parts[2].lstrip("\n") if len(parts) == 3 else text
+
+
 def ingest(knowledge: Knowledge, sources_dir: Path | str = SOURCES_DIR) -> list[str]:
     """Insert every curated source file into the vector store.
 
@@ -76,7 +92,9 @@ def ingest(knowledge: Knowledge, sources_dir: Path | str = SOURCES_DIR) -> list[
         knowledge.insert(
             name=source["source_id"],
             description=source["title"],
-            path=str(source["path"]),
+            text_content=strip_front_matter(
+                Path(source["path"]).read_text(encoding="utf-8")
+            ),
             reader=MarkdownReader(chunk_size=CHUNK_SIZE),
             metadata={
                 "source": source["source"],
@@ -96,9 +114,9 @@ def retrieve(knowledge: Knowledge, query: str, max_results: int = DEFAULT_MAX_RE
     """Search the curated sources and return plain inspectable dicts.
 
     No LLM decides whether or what to search. The query is built by the caller
-    from deterministic facts. Results come back in similarity order; Agno 3.1.1
-    does not expose the raw score on the returned Document, so rank is recorded
-    instead of a fabricated number.
+    from deterministic facts or from the user's question. Results come back in
+    similarity order; Agno 3.1.1 does not expose the raw score on the returned
+    Document, so rank is recorded instead of a fabricated number.
     """
     results = []
 
@@ -112,7 +130,9 @@ def retrieve(knowledge: Knowledge, query: str, max_results: int = DEFAULT_MAX_RE
                 "url": metadata.get("url", ""),
                 "content_type": metadata.get("content_type", ""),
                 "runtime_context": metadata.get("runtime_context", ""),
-                "content": (document.content or "")[:600],
+                # Returned whole. The chunker already bounds chunk length, and a
+                # character cap here could cut the exact fact a caller needs.
+                "content": document.content or "",
                 "rank": rank,
             }
         )

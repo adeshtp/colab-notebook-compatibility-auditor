@@ -1,0 +1,85 @@
+{
+  "_note": [
+    "A small, manually reviewable retrieval check. Every answerable question below was",
+    "read off a specific statement in data/sources/ before being written here, and",
+    "expected_sources names the document that actually contains that statement. The",
+    "out_of_domain questions are things this five-document corpus genuinely does not",
+    "cover; they exist to show the evidence gate refusing rather than to pad a score.",
+    "",
+    "This is a sanity check on retrieval and on the sufficiency threshold, not a",
+    "benchmark. Eighteen questions is far too few to support any accuracy claim, so",
+    "none is made. Regenerate the numbers with:",
+    "    python scripts/run_retrieval_eval.py"
+  ],
+  "top_k": 4,
+  "answerable": [
+    {
+      "question": "How do I pin a notebook to a past Colab runtime version?",
+      "expected_sources": ["colab-runtime-version-faq"],
+      "basis": "'How do I use a past runtime version?' answers it: Runtime -> Change runtime type, 'Runtime Version' dropdown."
+    },
+    {
+      "question": "How long are past Colab runtime versions available?",
+      "expected_sources": ["colab-runtime-version-faq"],
+      "basis": "'Currently, past runtime versions are available for 1 year after their release.'"
+    },
+    {
+      "question": "Why does a past runtime version take longer to connect to?",
+      "expected_sources": ["colab-runtime-version-faq"],
+      "basis": "'It can take 2-3 minutes to connect to a past runtime version, instead of the few seconds...' because the image must be downloaded."
+    },
+    {
+      "question": "Which Python version does the 2026.07 Colab runtime use?",
+      "expected_sources": ["colab-runtime-version-faq"],
+      "basis": "Published runtime versions table: 2026.07 -> Ubuntu 22.04.5 LTS; Python 3.12.13."
+    },
+    {
+      "question": "What version of PyTorch is in the 2026.04 runtime?",
+      "expected_sources": ["colab-runtime-version-faq"],
+      "basis": "Published runtime versions table: 2026.04 -> PyTorch 2.10.0."
+    },
+    {
+      "question": "Where is Google Drive mounted in a Colab runtime?",
+      "expected_sources": ["colab-filesystem-conventions"],
+      "basis": "'colab drivemount ... Mount Google Drive on the VM (default: /content/drive)'."
+    },
+    {
+      "question": "Why do I get a warning after pip install if I already imported the module?",
+      "expected_sources": ["colab-pip-install-behaviour"],
+      "basis": "google.colab._pip computes packages already in sys.modules and shows a restart warning."
+    },
+    {
+      "question": "Is sklearn the same package as scikit-learn?",
+      "expected_sources": ["colab-pip-install-behaviour"],
+      "basis": "packages_distributions() maps import names to distributions; sklearn is provided by scikit-learn."
+    },
+    {
+      "question": "How current is the pip freeze list published in backend-info?",
+      "expected_sources": ["colab-backend-info-readme"],
+      "basis": "'these files do not necessarily reflect the current state... There may be a one or two day delay'."
+    },
+    {
+      "question": "How do I change the runtime version in the Colab UI?",
+      "expected_sources": ["colab-runtime-version-faq"],
+      "basis": "'selecting it from the Runtime -> Change runtime type dialog'."
+    },
+    {
+      "question": "What are the caveats of using a past runtime version?",
+      "expected_sources": ["colab-runtime-version-faq"],
+      "basis": "'Caveats of pinning to a past runtime version' section, including slower connect and newer features breaking."
+    },
+    {
+      "question": "Why would someone pin a notebook to an older runtime?",
+      "expected_sources": ["colab-runtime-version-faq"],
+      "basis": "Stated reasons: wide audience such as a class or workshop; a core dependency such as Python cannot be changed back."
+    }
+  ],
+  "out_of_domain": [
+    {"question": "How much RAM does a free Colab runtime give me?"},
+    {"question": "Can I use a TPU in Colab and how do I request one?"},
+    {"question": "How long does a Colab session stay alive before it disconnects?"},
+    {"question": "What is the best GPU for training a large model in Colab?"},
+    {"question": "How do I set up SSH access to a Colab runtime?"},
+    {"question": "How do I use Kaggle notebooks instead of Colab?"}
+  ]
+}
