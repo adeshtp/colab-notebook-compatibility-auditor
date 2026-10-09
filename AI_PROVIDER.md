@@ -6,6 +6,11 @@ Isolate LLM provider selection from application logic. Only `explainer.py` may i
 provider SDK or read an API key. `models.py`, `notebook_parser.py`,
 `runtime_checker.py`, `rules.py` and `knowledge_base.py` must never do so.
 
+`qa.py` is the one other module that triggers generation. It does **not** import a
+provider SDK: it calls `explainer.build_model` and `explainer.ProviderError`, so
+provider construction stays in exactly one place and both workflows share the same
+configuration and the same offline mode.
+
 ## Verified environment facts (checked 2026-10-08)
 
 | Fact | Evidence |
@@ -234,8 +239,10 @@ catches it, reports `failed` and keeps the deterministic report unchanged.
 
 ## Streamlit Community Cloud suitability
 
-The intended deployment is: upload notebook, deterministic audit, local retrieval,
-hosted LLM API, structured explanation, report.
+The intended deployment is unchanged in shape: local parsing, local retrieval and
+embeddings, one hosted LLM request, a structured answer or explanation, a rendered
+report. Both workflows fit it — a question is one retrieval plus one request, and an
+audit is one retrieval per distinct rule plus one request.
 
 - **Groq** suits this. One HTTPS request per analysis and one environment secret. No
   GPU, no model download, no cold start. LanceDB and the SentenceTransformer index stay
@@ -244,3 +251,14 @@ hosted LLM API, structured explanation, report.
   allowance, so a local 3B model would be slower still than on a developer machine.
 
 None of this has been deployed. It is a fit assessment, not a deployment claim.
+
+## Cost behaviour in question mode
+
+Question mode adds no new call sites and no second model call, but it does change what
+one request can cost. The prompt is the user's question plus the retrieved passages,
+which is smaller than an audit prompt that carries every finding. The user controls the
+passage count, capped at 8 in the UI and 4 by default in `qa.DEFAULT_TOP_K`.
+
+The largest lever is the evidence gate: a refused question costs **zero** provider
+tokens, because the model is never called. Of the hand-written set in
+`tests/retrieval_eval.json`, all 6 out-of-domain questions are refused before generation.
