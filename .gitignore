@@ -1,6 +1,8 @@
 # Secrets and local config
 .env
 .env.*
+# The template is committed; a real .env stays ignored.
+!.env.example
 .streamlit/secrets.toml
 
 # Raw notebook archive. Read-only input material, not part of the project.
@@ -15,6 +17,13 @@ venv/
 *.egg-info/
 build/
 dist/
+
+# Coverage output
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+.pytest-cov/
 
 # Generated RAG index and run artefacts. The index is always rebuilt from the
 # committed curated sources, so it is never tracked.

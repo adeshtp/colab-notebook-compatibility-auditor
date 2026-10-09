@@ -1,119 +1,90 @@
 # Colab Notebook Compatibility Auditor
 
-An old Google Colab notebook, checked against a real Colab runtime snapshot.
+A Python tool that checks Google Colab notebooks for selected dependency and runtime
+compatibility risks, then uses retrieved official documentation to explain the findings.
 
-> **This tool identifies detectable compatibility risks. It does not guarantee that a
-> notebook will execute successfully.**
+> **It analyses notebooks. It does not execute them.**
+> A `READY` result means no issue was found by the supported checks. It is not a
+> guarantee that the notebook will run.
 
-## Problem
+![The Streamlit application auditing a notebook with a pinned numpy version against the 2026.07 Colab runtime](assets/app-preview.png)
 
-Google Colab runtimes are updated frequently. A notebook written a year ago may pin a
-package version that no longer matches the runtime, install packages without pins,
-depend on packages that are not present, or assume Colab-specific filesystem paths.
-When someone reuses that notebook, the failures are cryptic.
+*The screenshot above is the real application, run against the committed test fixture
+`tests/fixtures/mismatching_pin.ipynb` and the `2026.07` runtime snapshot. It shows the
+three stages the tool produces: deterministic findings, retrieved evidence with source
+links, and a single AI explanation.*
 
-The audience is a data-science learner or developer trying to reuse an old notebook.
+---
 
-## Solution
+## The problem
 
-Parse the notebook as JSON, extract its package references, compare them against the
-real pre-installed package set that Google publishes for a chosen runtime, and report
-the differences. Then retrieve official Colab documentation about those differences and
-generate a short grounded explanation.
+Colab runtimes are rebuilt frequently. A notebook written a year ago can
 
-## The AI does not decide anything
+- pin a package version the current runtime no longer ships,
+- install packages with no version pin at all, so the resolved version can drift,
+- rely on packages that are not in the runtime,
+- assume Colab-specific filesystem paths such as `/content/`.
 
-This is the most important design point.
+Reusing such a notebook produces cryptic errors long after the cause. Finding them by
+hand means reading install cells, remembering what changed, and guessing.
 
-```
-.ipynb
-  ↓  notebook_parser      read as JSON. Never executed.
-  ↓  runtime_checker      package metadata from googlecolab/backend-info
-  ↓  rules                R001–R006 decide what is a risk        ← authoritative
-  ↓  knowledge_base       retrieve official evidence            ← deterministic
-  ↓  explainer            ONE model call, prose only            ← cannot decide
-```
+## What the auditor checks
 
-The rule engine owns `rule`, `package`, `severity`, `status`, `message` and `cell`.
-The model receives those as fixed input and may only write explanatory prose.
-
-This is enforced structurally, not by convention: `ExplanationResult` has no version,
-severity or status field, and `AuditResult` has no explanation field, so the two cannot
-merge even by accident. The model never decides whether to search, what to search, or
-which findings exist.
-
-## Report states
-
-| State | Meaning |
-|---|---|
-| `READY` | No obvious risk detected by the implemented checks. |
-| `ATTENTION` | One or more detectable risks or assumptions worth reviewing. |
-| `HIGH_RISK` | One or more deterministic high-severity rule violations. |
-| `UNKNOWN` | Insufficient evidence to conclude; manual verification required. |
-
-Worst-first aggregation: `HIGH` → `HIGH_RISK`, then `ATTENTION`, then `UNKNOWN`,
-otherwise `READY`.
-
-`READY` means **no obvious risk was detected by the implemented checks**. It does not
-mean the notebook will run.
-
-## The six rules
+Six deterministic rules, implemented in [`src/rules.py`](src/rules.py):
 
 | Rule | What it detects | Severity |
 |---|---|---|
-| R001 | Notebook pins a version that differs from the runtime snapshot | `HIGH` |
-| R002 | A pip install with no exact version pin | `ATTENTION` |
-| R003 | `/content/` Colab path assumptions | `ATTENTION` |
-| R004 | A package absent from the snapshot | `UNKNOWN` |
-| R005 | The same package installed twice with different requirements | `HIGH` |
-| R006 | Insufficient evidence to conclude | `UNKNOWN` |
+| **R001** | Notebook pins an exact version that differs from the selected runtime snapshot | `HIGH` |
+| **R002** | A `pip install` with no exact version pin | `ATTENTION` |
+| **R003** | `/content/` Colab path assumptions | `ATTENTION` |
+| **R004** | A package not listed in the selected runtime snapshot | `UNKNOWN` |
+| **R005** | The same package installed twice with different requirements | `HIGH` |
+| **R006** | Insufficient evidence to conclude, e.g. an unparseable notebook or no snapshot selected | `UNKNOWN` |
 
-Full definitions, detection logic and per-rule limitations are in `RULES.md`.
+Full definitions, detection logic and per-rule limitations: [`RULES.md`](RULES.md).
 
-## Evidence comes from official sources
+Findings roll up into a status, worst first:
 
-Five curated documents from Google Colab documentation and the `googlecolab` GitHub
-organisation. No blogs, no Stack Overflow, no SEO content. Provenance for each is
-recorded in `data/sources/manifest.json` and explained in `SOURCES.md`.
+`HIGH` → `HIGH_RISK`, else `ATTENTION`, else `UNKNOWN`, else `READY`
 
-Runtime package data is vendored from `googlecolab/backend-info` at pinned commits for
-five snapshots (`2025.07` → `2026.07`), so analyses are reproducible offline.
+## Three outputs, deliberately separated
 
-## Installation
+This distinction is the core design decision, and it is enforced by the type system
+rather than by prompt wording:
 
-```bash
-python -m venv .venv
-.venv/bin/pip install -r requirements.txt
+1. **Deterministic findings** — produced by the rule engine. They own `rule`, `package`,
+   `severity`, `status`, `message` and `cell`.
+2. **Retrieved evidence** — chunks from a curated corpus of official Colab
+   documentation, shown with source title and URL *before* any model text.
+3. **AI explanation** — prose only. `ExplanationResult` has no version, severity or
+   status field, and `AuditResult` has no explanation field, so the two cannot merge.
+
+The model never decides whether a rule fired, never chooses what to search, and never
+starts an agentic browsing loop. Retrieval is a direct Python call, one search per
+distinct rule.
+
+## How it works
+
+```mermaid
+flowchart TD
+    A[".ipynb upload"] --> B["notebook_parser<br/>read as JSON, never executed"]
+    B --> C["runtime_checker<br/>snapshot package index"]
+    C --> D["rules R001-R006<br/>deterministic findings"]
+    D --> E["knowledge_base.retrieve<br/>local LanceDB over curated docs"]
+    D --> F["evidence shown with sources"]
+    E --> F
+    D --> G["explainer.explain<br/>ONE model call, prose only"]
+    E --> G
+    F --> H["Streamlit report"]
+    G --> H
 ```
 
-`src/` is a flat script directory rather than an installed package, so put it on the
-import path when you use the Python API:
+Two independent branches leave the rule engine. If the provider is unavailable, the
+deterministic report and the evidence still render on their own.
 
-```bash
-export PYTHONPATH=src
-```
+## Example result
 
-That is what makes `from rules import audit_notebook` work, from any directory. The
-Streamlit app sets this up for itself, and pytest is configured with `pythonpath` in
-`pyproject.toml`.
-
-For the AI explanation you also need a Groq API key:
-
-```bash
-export GROQ_API_KEY=...     # never commit this
-```
-
-The deterministic audit and evidence retrieval work with no key at all.
-
-## Usage
-
-```python
-from rules import audit_notebook
-
-result = audit_notebook("my_old_notebook.ipynb", "2026.07")
-
-print(result.status)   # READY | ATTENTION | HIGH_RISK | UNKNOWN
-```
+Auditing `tests/fixtures/mismatching_pin.ipynb` against snapshot `2026.07`:
 
 ```json
 {
@@ -126,153 +97,234 @@ print(result.status)   # READY | ATTENTION | HIGH_RISK | UNKNOWN
 }
 ```
 
-To include the evidence and the AI explanation, call the same three plain functions the
-Streamlit app calls:
+A longer, genuine end-to-end report is in
+[`reports/example_report.md`](reports/example_report.md).
+
+## Technology stack
+
+| Component | Used for |
+|---|---|
+| Python 3.11+ | Language |
+| [Pydantic](https://docs.pydantic.dev/) | Data shapes and the explanation schema |
+| [Agno](https://docs.agno.com/) 3.x | The single explanation agent |
+| [Sentence Transformers](https://www.sbert.net/) | `all-MiniLM-L6-v2` local embeddings |
+| [LanceDB](https://lancedb.github.io/lancedb/) | Local vector store |
+| [Groq](https://console.groq.com/) | Default explanation provider, `openai/gpt-oss-20b` |
+| [Ollama](https://ollama.com/) | Optional fully offline mode, `ministral-3:3b` |
+| [Streamlit](https://streamlit.io/) | Web interface |
+
+The deterministic audit, the retrieval layer and the whole test suite run without
+calling any LLM provider.
+
+## Installation
+
+Requires Python 3.11 or newer. Verified on Python 3.14 and CI-tested on 3.12 and 3.13.
+
+```bash
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+```
+
+`requirements.txt` is the pinned, macOS-verified lockfile. To install from ranges
+instead:
+
+```bash
+.venv/bin/pip install ".[llm,ui,dev]"
+```
+
+`src/` is a flat script directory rather than an installed package, so put it on the
+import path when using the Python API:
+
+```bash
+export PYTHONPATH=src
+```
+
+An editable install does **not** work here: Python 3.14 skips the `.pth` file setuptools
+generates because its name begins with `__`, so the install appears to succeed and then
+the imports fail. Use `PYTHONPATH=src`.
+
+## Running the application
+
+```bash
+.venv/bin/streamlit run app/streamlit_app.py
+```
+
+Upload a `.ipynb`, pick a runtime snapshot, press **Analyze**.
+
+The Streamlit app handles its own `sys.path`, so it needs no `PYTHONPATH` and no install
+step.
+
+### Using it as a library
+
+```python
+import rules
+
+result = rules.audit_notebook("my_old_notebook.ipynb", "2026.07")
+print(result.status)          # READY | ATTENTION | HIGH_RISK | UNKNOWN
+```
+
+To include evidence and the AI explanation, call the same three plain functions the app
+calls:
 
 ```python
 from explainer import collect_evidence, explain
 from knowledge_base import build_knowledge, ingest
 
 knowledge = build_knowledge()
-ingest(knowledge)                       # rebuild the local index from curated sources
+ingest(knowledge)                          # rebuilds the index from data/sources/
 
 result = rules.audit_notebook("my_old_notebook.ipynb", "2026.07")
-evidence = collect_evidence(knowledge, result)      # deterministic, one search per rule
-explanation = explain(result, evidence)             # one model call, prose only
+evidence = collect_evidence(knowledge, result)   # deterministic, one search per rule
+explanation = explain(result, evidence)          # one model call, prose only
 
-print(result.status)                        # never affected by the model
-print(evidence["R001"][0]["url"])           # inspectable before any model call
+print(evidence["R001"][0]["url"])         # inspectable before any model call
 print(explanation.summary)
 ```
 
-Findings are deduplicated by rule before retrieval, so a notebook with 40 findings
-still costs **one** model call. If the provider fails, catch `ProviderError` and keep the
-deterministic result; the Streamlit app shows this path.
+Findings are deduplicated by rule before retrieval, so a notebook with many findings
+still costs **one** model call.
 
-### Streamlit UI
+## API key
+
+The AI explanation needs a Groq key:
 
 ```bash
-.venv/bin/streamlit run app/streamlit_app.py
+export GROQ_API_KEY=...
 ```
 
-Upload a notebook, pick a runtime snapshot, press Analyze. The report shows the
-deterministic findings first, then the retrieved evidence grouped by source with links,
-then the AI explanation under a clearly separated heading. There is no chat interface.
+**Without a key the tool is still useful.** Parsing, the rule engine, runtime checking
+and evidence retrieval all work, and the UI reports the AI step as unavailable rather
+than failing.
 
-## Providers
-
-| Provider | Model | Key | Role |
-|---|---|---|---|
-| **Groq** | `openai/gpt-oss-20b` | `GROQ_API_KEY` | Default |
-| Ollama | `ministral-3:3b` | none | Optional fully offline mode |
-
-Set `COLABAUDIT_LLM_PROVIDER=ollama` and `COLABAUDIT_LLM_MODEL=ministral-3:3b` for the
-offline mode. Configuration and the measured selection are in `AI_PROVIDER.md`.
-
-Without a key the deterministic audit and evidence retrieval still work; the UI says
-the AI step is unavailable rather than failing.
-
-## Deployment
-
-Ready for Streamlit Community Cloud. Put the key in Streamlit secrets:
+`.env.example` is a template. **This project does not load `.env` automatically** —
+there is no dotenv dependency. Export the variable in your shell, or put it in
+`.streamlit/secrets.toml`:
 
 ```toml
-# .streamlit/secrets.toml — never commit this
+# .streamlit/secrets.toml — gitignored, never commit
 GROQ_API_KEY = "..."
 ```
 
-The LanceDB index is rebuilt from the committed curated sources on each session start,
-because a Cloud filesystem is not durable. No claim is made that a generated database
-persists there. Nothing has been deployed.
+### Optional offline mode
 
-## Tests
+To explain findings with no hosted provider at all, using a local Ollama model:
 
 ```bash
-.venv/bin/python -m pytest
+export COLABAUDIT_LLM_PROVIDER=ollama
+export COLABAUDIT_LLM_MODEL=ministral-3:3b
 ```
 
-**63 passed, 1 skipped.** The suite makes no network request, needs no API key and runs
-no local model inference. The single skipped test is a live Ollama call, opt-in:
+This needs no API key but is roughly 30x slower and less complete than Groq. Why Groq is
+the default, with the measurements behind it, is in [`AI_PROVIDER.md`](AI_PROVIDER.md).
+
+## Running the tests
+
+```bash
+.venv/bin/python -m pytest -q
+```
+
+**69 passed, 1 skipped.** No API key, no network calls to any provider, and no local
+model inference. The skipped test is a live Ollama call, opt-in with:
 
 ```bash
 RUN_OLLAMA_TESTS=1 .venv/bin/python -m pytest -m integration
 ```
 
-The UI tests drive the real app through Streamlit's `AppTest`, including the no-key
-degraded path.
+The retrieval tests build a real LanceDB index and download the embedding model on first
+run, so the suite is not fully offline; nothing else reaches the network.
 
-## What was verified
+A [GitHub Actions workflow](.github/workflows/tests.yml) runs the suite, a `pyflakes`
+lint and a knowledge-base rebuild check on Python 3.12 and 3.13 with no secrets set.
 
-Measured on the development machine, not estimated:
+## Project structure
 
-- **83 archived Colab notebooks** audited with zero parse or runtime failures.
-  Distribution: 66 `ATTENTION`, 17 `READY`. Findings: R002 × 112, R004 × 108,
-  R003 × 59.
-- R001 and R005 fire zero times on that archive because none of those notebooks pins a
-  version. That is a property of the corpus, not a gap in the rules. The test fixtures
-  exercise both.
-- Groq returns in 1.4–2.5 s per call and explained every supplied rule in testing.
+```
+src/notebook_parser.py    Read .ipynb as JSON, extract pip installs and imports
+src/runtime_checker.py    Load a vendored runtime snapshot, look up versions
+src/rules.py              R001-R006 and status aggregation
+src/knowledge_base.py     Curated sources, embeddings, local LanceDB retrieval
+src/explainer.py          The single Agno call and its prompt
+src/models.py             Pydantic data shapes
+app/streamlit_app.py      UI only, no analysis logic
+scripts/fetch_runtimes.py Re-download runtime snapshots at pinned commits
+scripts/compare_providers.py  Provider comparison harness
+tests/                    pytest suite plus eight notebook fixtures
+data/runtimes/            Five vendored Colab runtime snapshots
+data/sources/             Five curated official sources and their manifest
+reports/                  Example report, provider evaluations, repository audit
+assets/app-preview.png    Screenshot of the real application
+```
 
-## Known limitations
+Reference documents: [`ARCHITECTURE.md`](ARCHITECTURE.md) (pipeline and responsibility
+boundary), [`RULES.md`](RULES.md), [`AI_PROVIDER.md`](AI_PROVIDER.md) (provider
+configuration and the measured selection), [`SOURCES.md`](SOURCES.md) (provenance).
 
-- **Regex parsing, not `ast`.** An `import` inside a comment or docstring is read as a
-  dependency. Verified not to affect the 83-notebook archive, but it is a real false
-  positive source.
-- **Short import-to-distribution map.** Six known cases (`sklearn`, `cv2`, `bs4`,
-  `PIL`, `yaml`, `dotenv`). An unmapped name mismatch is reported as an absent package,
-  producing a false `UNKNOWN`.
-- **Snapshot data can lag.** Google's own README says published package lists reflect
-  the most recent CI submission, not the live runtime, and may be one to two days behind.
-- **`git+` references carry no version** in `pip-freeze.txt` and are skipped, so such a
-  package looks absent and yields `UNKNOWN`. Conservative and correct, but conservative.
-- **Runtime snapshots differ in Python version.** `2025.07` ships Python 3.11.13 while
-  every later snapshot is 3.12.x, which matters for notebooks written against older
-  TensorFlow or Keras releases.
-- **Retrieval relevance is not scored numerically.** Agno 3.1.1 does not expose the
-  similarity score, so results are ordered and no retrieval metric is claimed.
-- **The corpus is five small documents.** It covers Colab runtime versioning and
-  `/content/` paths. It cannot explain a specific third-party package's breaking changes;
-  no package-documentation source tier is implemented.
-- **One model call per audit, not zero.** If the provider is unavailable the audit still
-  completes, but the prose layer is missing.
-- **The explanation call is not fully reliable.** Agno reports
-  `supports_native_structured_outputs = False` for Groq, so the output schema is advisory
-  rather than enforced. One call in roughly fourteen observed failed to parse. When that
-  happens the UI says the AI step is unavailable and the deterministic report is
-  unaffected.
+The generated LanceDB index is **not** committed. It is rebuilt from the committed
+curated sources on first use, which is what makes the repository self-contained.
+
+## Data and source provenance
+
+Everything the tool compares against is vendored in the repository, so an audit is
+reproducible without network access.
+
+- **Runtime snapshots** — `data/runtimes/` holds `pip-freeze.txt` and `os-info.txt` from
+  [googlecolab/backend-info](https://github.com/googlecolab/backend-info) for five Colab
+  runtime versions (`2025.07` through `2026.07`), each at a pinned commit recorded in its
+  `manifest.json`. Refetch with `python scripts/fetch_runtimes.py`.
+- **Curated documentation** — `data/sources/` holds five short documents drawn from
+  [Google Colab documentation](https://research.google.com/colaboratory/runtime-version-faq.html)
+  and the `googlecolab` GitHub organisation. No blogs, no Stack Overflow, no SEO content.
+  Each records its source URL and retrieval date in its front matter and in
+  `data/sources/manifest.json`.
+
+Google's own README notes the published package lists reflect the most recent CI
+submission rather than the live runtime, and may be one or two days behind.
+
+## Limitations and trade-offs
+
+- **The notebook is analysed, never executed.** Static text analysis cannot see runtime
+  behaviour, data shapes, network access or API failures.
+- **`READY` is not a guarantee.** It means the supported checks found nothing.
+- **Runtime snapshots are a bounded reference dataset.** Five historical versions, not
+  the live runtime. Google states its published lists can lag by a day or two.
+- **The rule engine covers only R001–R006.** Anything outside those rules is not
+  detected. There is no dependency resolution and no solver.
+- **Parsing is regex-based, not `ast`.** An `import` inside a comment or docstring can be
+  read as a dependency.
+- **The import-to-distribution map has six entries** (`sklearn`, `cv2`, `bs4`, `PIL`,
+  `yaml`, `dotenv`). An unmapped name mismatch is reported as an absent package, which
+  produces a conservative `UNKNOWN`.
+- **The evidence corpus is five small documents** covering Colab runtime versioning and
+  `/content/` paths. It cannot explain a specific third-party package's breaking
+  changes.
+- **The AI explanation is secondary.** It can be wrong, and one call in roughly fourteen
+  observed failed to parse. The deterministic findings stand on their own and are never
+  overwritten.
+- **Retrieval relevance is not scored numerically**, so no retrieval metric is claimed.
 - **No accuracy figure is claimed.** The provider comparison used two cases per provider.
-  This is an engineering selection, not a benchmark.
+  It was an engineering selection, not a benchmark.
 
-## What this is not
+Measured on 83 archived Colab notebooks: every file parsed without error (66 `ATTENTION`,
+17 `READY`). R001 and R005 fired zero times on that archive because none of those
+notebooks pins a version; the test fixtures exercise both.
 
-Not a universal debugger, not an autonomous debugging agent, not a package solver, not a
-guaranteed compatibility checker, and not an automatic repair system. It never executes
-a notebook, installs anything, resolves dependencies, performs full static analysis,
-builds a dependency graph, or supports arbitrary Jupyter environments.
+## Licence and acknowledgements
 
-## Repository layout
+Project code is MIT licensed — see [`LICENSE`](LICENSE).
 
-| Path | Purpose |
-|---|---|
-| `src/notebook_parser.py` | Read `.ipynb` as JSON, extract installs and imports |
-| `src/runtime_checker.py` | Load a vendored runtime snapshot |
-| `src/rules.py` | R001–R006 and status aggregation |
-| `src/knowledge_base.py` | Curated sources, embeddings, local LanceDB retrieval |
-| `src/explainer.py` | The single Agno call and its prompt |
-| `src/models.py` | Pydantic data shapes |
-| `app/streamlit_app.py` | UI only, no analysis logic |
-| `tests/` | pytest suite and notebook fixtures |
-| `scripts/` | Fetch runtime snapshots, compare providers |
-| `data/runtimes/` | Five vendored Colab runtime snapshots |
-| `data/sources/` | Five curated official sources plus manifest |
-| `reports/` | Example report, provider evaluation records, repository audit |
+This project was informed by an Agno learning notebook in my own archive, which
+demonstrated the RAG pattern reused here: `Knowledge` + `LanceDb` +
+`SentenceTransformerEmbedder` for retrieval, an `Agent` with a Pydantic
+`output_schema` for structured output. The implementation was rewritten against the
+Agno 3.x API, since the notebook used 2.x APIs that have since changed. No code was
+copied from it, and the unrelated demos in that notebook (web-research teams, finance
+tools, memory, vision, custom tools) were deliberately not carried over.
 
-Reference documents: `RULES.md` (rule definitions and limitations), `ARCHITECTURE.md`
-(pipeline and responsibility boundary), `AI_PROVIDER.md` (provider configuration and
-the measured selection), `SOURCES.md` (data provenance).
+Third-party material bundled in this repository:
 
-## Licence
+- `data/runtimes/` contains unmodified `pip-freeze.txt` and `os-info.txt` output from
+  `googlecolab/backend-info`, Copyright Google LLC, licensed Apache-2.0.
+- `data/sources/` contains short quotations and close paraphrases of public Google Colab
+  documentation, each attributed with its source URL and retrieval date.
 
-Code is MIT licensed, see `LICENSE`. The vendored files under `data/runtimes/` are
-Google's `pip-freeze.txt` and `os-info.txt` output from `googlecolab/backend-info`,
-which is Apache-2.0 licensed. See `SOURCES.md`.
+See [`SOURCES.md`](SOURCES.md) for full provenance.
