@@ -249,6 +249,60 @@ def test_a_citation_to_a_source_that_was_not_retrieved_is_reported():
     assert unsupported_citations(answer, passages) == ["src-invented"]
 
 
+def test_passage_numbers_are_mapped_back_to_their_source_id():
+    """A model that answers with [1], [2] instead of ids must not be called a liar.
+
+    Found by reading the first real screenshot: the model cited inline as [1] and
+    [2], repeated those numbers in used_sources, and every citation was reported as
+    invented. That is a formatting habit, not a hallucination, and flagging it hid
+    the sources that were genuinely used.
+    """
+    passages = [
+        passage("first", "src-one"),
+        passage("second", "src-two"),
+    ]
+    answer = AnswerResult(answer="a", used_sources=["1", "2"], follow_ups=[], caveats=[])
+
+    used, unsupported = qa.resolve_used_sources(answer, passages)
+
+    assert used == ["src-one", "src-two"]
+    assert unsupported == []
+
+
+def test_ids_and_passage_numbers_can_be_mixed():
+    passages = [passage("first", "src-one"), passage("second", "src-two")]
+    answer = AnswerResult(
+        answer="a", used_sources=["src-one", "2"], follow_ups=[], caveats=[]
+    )
+
+    used, unsupported = qa.resolve_used_sources(answer, passages)
+
+    assert used == ["src-one", "src-two"]
+    assert unsupported == []
+
+
+def test_a_genuinely_invented_citation_is_still_caught_among_valid_ones():
+    """Mapping must not become a loophole that accepts anything."""
+    passages = [passage("first", "src-one"), passage("second", "src-two")]
+    answer = AnswerResult(
+        answer="a", used_sources=["1", "colab-release-notes"], follow_ups=[], caveats=[]
+    )
+
+    used, unsupported = qa.resolve_used_sources(answer, passages)
+
+    assert used == ["src-one"]
+    assert unsupported == ["colab-release-notes"]
+
+
+def test_duplicate_citations_are_collapsed():
+    passages = [passage("first", "src-one"), passage("second", "src-one")]
+    answer = AnswerResult(answer="a", used_sources=["1", "2"], follow_ups=[], caveats=[])
+
+    used, _ = qa.resolve_used_sources(answer, passages)
+
+    assert used == ["src-one"]
+
+
 def test_answer_schema_carries_no_finding_or_severity_fields():
     fields = set(AnswerResult.model_fields)
 

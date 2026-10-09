@@ -157,10 +157,12 @@ Google Colab documentation.
 Rules you must follow:
 - Answer only from the passages. Never use outside knowledge, and never fill a gap
   with what you happen to know about Colab.
-- Cite by passage number, like [1] or [2], immediately after the claim it supports.
+- Cite inline by passage number, like [1] or [2], immediately after the claim it supports.
   Only cite passage numbers that were actually given to you.
-- List in 'used_sources' only the source ids whose passages you actually used. Leave
-  it empty if you used none.
+- In 'used_sources', list the source_id values of the passages you used, copied
+  character for character from the passage headers, for example
+  "colab-runtime-version-faq". Do not put passage numbers such as 1 or 2 in this
+  field; those belong in the inline [n] citations only.
 - If the passages do not answer the question, say so plainly in the first sentence of
   'answer'. Do not substitute a related answer, do not speculate, and do not pad the
   answer with general Colab advice that the passages do not support.
@@ -184,8 +186,9 @@ class AnswerResult(BaseModel):
     )
     used_sources: list[str] = Field(
         description=(
-            "Source ids of the passages actually used, copied exactly from the given "
-            "list. Empty if the passages were not sufficient."
+            "source_id values of the passages actually used, copied exactly from the "
+            "passage headers, e.g. 'colab-runtime-version-faq'. Never passage numbers. "
+            "Empty if the passages were not sufficient."
         )
     )
     follow_ups: list[str] = Field(
@@ -212,6 +215,7 @@ class Answered:
     coverage: float = 0.0
     passages: list[dict] = field(default_factory=list)
     answer: AnswerResult | None = None
+    used_sources: list[str] = field(default_factory=list)
     unsupported_citations: list[str] = field(default_factory=list)
     detail: str = ""
 
@@ -250,15 +254,48 @@ If the passages do not answer it, say so in the first sentence of 'answer' and l
 'used_sources' empty."""
 
 
+def resolve_used_sources(answer: AnswerResult, passages: list[dict]) -> tuple[list[str], list[str]]:
+    """Split the model's cited sources into (resolved ids, unsupported ids).
+
+    Models are unreliable bookkeepers. Asked for source ids they often reply with the
+    passage numbers they cited inline, such as "1, 2", which are not ids at all and
+    would otherwise be reported as invented citations. Both forms are resolved here:
+
+      * an exact source id is kept as-is
+      * a passage number is mapped back to that passage's source id
+
+    Anything left over really was not retrieved, and is reported so the caller can
+    refuse to render it as a reference.
+    """
+    by_id = {p["source_id"] for p in passages}
+    by_number = {
+        str(index): passage["source_id"]
+        for index, passage in enumerate(passages, start=1)
+    }
+
+    resolved: list[str] = []
+    unsupported: list[str] = []
+
+    for entry in answer.used_sources:
+        candidate = str(entry).strip()
+        if candidate in by_id:
+            resolved.append(candidate)
+        elif candidate in by_number:
+            resolved.append(by_number[candidate])
+        else:
+            unsupported.append(candidate)
+
+    # Preserve order while removing duplicates.
+    return list(dict.fromkeys(resolved)), list(dict.fromkeys(unsupported))
+
+
 def unsupported_citations(answer: AnswerResult, passages: list[dict]) -> list[str]:
     """Source ids the model cited that were not actually retrieved.
 
     A citation to a document the user was never shown is worse than no citation, so
     it is surfaced instead of being rendered as a reference link.
     """
-    available = {p["source_id"] for p in passages}
-
-    return sorted({source for source in answer.used_sources if source not in available})
+    return resolve_used_sources(answer, passages)[1]
 
 
 def parse_answer(content, provider: str = DEFAULT_PROVIDER) -> AnswerResult:
@@ -365,13 +402,16 @@ def answer_question(
             detail=f"{type(exc).__name__}: {exc}"[:300],
         )
 
+    used, unsupported = resolve_used_sources(answer, passages)
+
     return Answered(
         question=question,
         status="ok",
         coverage=coverage,
         passages=passages,
         answer=answer,
-        unsupported_citations=unsupported_citations(answer, passages),
+        used_sources=used,
+        unsupported_citations=unsupported,
     )
 
 
@@ -388,5 +428,6 @@ __all__ = [
     "format_passages",
     "is_sufficient",
     "parse_answer",
+    "resolve_used_sources",
     "unsupported_citations",
 ]

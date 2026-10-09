@@ -190,11 +190,16 @@ def render_answered(
         )
 
     st.markdown("**Sources used**")
-    used = set(answer.used_sources) - set(result.unsupported_citations)
-    if not used:
-        st.info("The model reported using none of the retrieved passages.")
+    if not result.used_sources:
+        st.info(
+            "The model did not attribute the answer to any of the retrieved passages. "
+            "Read the passages below before relying on it."
+        )
+    # Several passages can come from one document, so list each source once.
+    listed = set()
     for passage in result.passages:
-        if passage["source_id"] in used:
+        if passage["source_id"] in result.used_sources and passage["source_id"] not in listed:
+            listed.add(passage["source_id"])
             st.markdown(f"- [{passage['title']}]({passage['url']}) — {passage['source']}")
 
     if answer.caveats:
