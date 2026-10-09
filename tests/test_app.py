@@ -26,12 +26,19 @@ def open_app() -> AppTest:
 
 def upload(app: AppTest, fixture: str) -> AppTest:
     path = FIXTURES / f"{fixture}.ipynb"
-    app.file_uploader[0].upload(path.name, path.read_bytes()).run()
+    app.file_uploader(key="audit_upload").upload(path.name, path.read_bytes()).run()
     return app
 
 
 def analyse(app: AppTest) -> AppTest:
-    app.button[0].click().run()
+    app.button(key="audit_analyze").click().run()
+    return app
+
+
+def ask(app: AppTest, question: str) -> AppTest:
+    """Type a question into the QA tab and submit it."""
+    app.text_input(key="ask_question").set_value(question).run()
+    app.button(key="ask_submit").click().run()
     return app
 
 
@@ -96,3 +103,69 @@ def test_app_never_executes_the_notebook():
 
     for forbidden in ("exec(", "eval(", "subprocess", "os.system", "runpy"):
         assert forbidden not in source
+
+
+# ------------------------------------------------------------- question asking
+
+def test_question_mode_retrieves_and_shows_sources_without_a_key(monkeypatch):
+    """The primary mode must work with no provider key at all."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    app = ask(open_app(), "Where is Google Drive mounted in a Colab runtime?")
+
+    assert not app.exception
+    body = " ".join([c.value for c in app.caption] + [m.value for m in app.markdown])
+    assert "colab-filesystem-conventions" in body
+    assert "research.google.com" in body or "google-colab-cli" in body
+
+
+def test_question_mode_refuses_when_the_corpus_does_not_cover_it(monkeypatch):
+    """A question the corpus cannot answer must show a refusal, not an invented answer."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    app = ask(open_app(), "How much RAM does a free Colab runtime give me?")
+
+    assert not app.exception
+    errors = " ".join(e.value for e in app.error)
+    assert "does not appear to cover this question" in errors
+
+
+def test_question_mode_reports_the_coverage_it_measured(monkeypatch):
+    """The gate's number is shown, so a refusal is inspectable rather than magic."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    app = ask(open_app(), "Where is Google Drive mounted in a Colab runtime?")
+
+    captions = " ".join(c.value for c in app.caption)
+    assert "evidence coverage" in captions
+
+
+def test_blank_question_is_handled(monkeypatch):
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    app = ask(open_app(), "")
+
+    assert not app.exception
+    assert any("Type a question" in i.value for i in app.info)
+
+
+def test_both_modes_coexist(monkeypatch):
+    """The audit tab must keep working in the same app as the QA tab."""
+    monkeypatch.delenv("GROQ_API_KEY", raising=False)
+
+    app = analyse(upload(open_app(), "unpinned_package"))
+
+    text = " ".join(item.value for item in app.markdown)
+    assert "ATTENTION" in text
+    assert "R002" in text
+    assert "R004" in text
+
+
+def test_audit_findings_are_not_overwritable_through_the_question_path():
+    """A question cannot inject a finding. The rule engine owns those fields."""
+    source = APP_PATH.read_text()
+
+    # The QA tab must not call the rule engine at all.
+    ask_section = source.split('with ask_tab:')[1].split('with audit_tab:')[0]
+    assert "rules." not in ask_section
+    assert "audit_notebook" not in ask_section
