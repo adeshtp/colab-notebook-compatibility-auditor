@@ -83,6 +83,11 @@ def status_caption(llm_status: str) -> str:
     }.get(llm_status, llm_status)
 
 
+def plural(count: int, singular: str, many: str) -> str:
+    """'1 dependency' reads better than '1 dependencies'."""
+    return f"{count} {singular if count == 1 else many}"
+
+
 st.title("Colab Notebook Compatibility Auditor")
 st.caption(
     "Deterministic notebook auditing, then retrieval of official Colab evidence, "
@@ -170,15 +175,14 @@ st.markdown(f"### :{STATUS_COLOUR.get(result.status, 'grey')}[{result.status}]")
 
 summary_bits = [
     f"Notebook `{result.notebook_name}`",
-    f"runtime **{result.runtime.snapshot}"
-    if result.runtime else "no runtime selected",
+    f"runtime {result.runtime.snapshot}" if result.runtime else "no runtime selected",
 ]
 if result.runtime:
     summary_bits.append(
         f"{result.runtime.os_version}, Python {result.runtime.python_version}"
     )
-summary_bits.append(f"{len(result.dependencies)} dependencies")
-summary_bits.append(f"{len(result.findings)} findings")
+summary_bits.append(plural(len(result.dependencies), "dependency", "dependencies"))
+summary_bits.append(plural(len(result.findings), "finding", "findings"))
 st.caption(" · ".join(str(bit) for bit in summary_bits))
 
 st.subheader("Detected by auditor")
@@ -235,7 +239,10 @@ for rule, hits in evidence.items():
         st.markdown(f"*{source} — {title}*")
         st.caption(url)
         for snippet in snippets:
-            st.markdown(f"> {snippet}")
+            # Quoted source text is shown literally. Rendering it as markdown would
+            # interpret the document's own headings and turn evidence into page
+            # headings.
+            st.text(snippet)
 
 st.subheader("AI-generated explanation")
 st.caption(f"Provider: {provider} · model: {model} · {status_caption(llm_status)}.")
