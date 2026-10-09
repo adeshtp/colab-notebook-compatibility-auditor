@@ -9,16 +9,17 @@ description = "Static compatibility risk auditing for old Google Colab notebooks
 requires-python = ">=3.11"
 
 [project.optional-dependencies]
+# Everything needed to run the explanation layer, whether or not a Groq key is set.
+# `ollama` is not optional: src/explainer.py imports agno.models.ollama at module
+# level, and that module imports the `ollama` package. Omitting it makes the whole
+# application unimportable, which is what CI caught.
 llm = [
     "agno>=3.1,<4",
     "groq>=0.30",
+    "ollama>=0.6",
     "lancedb>=0.40",
     "sentence-transformers>=6.1",
     "openai>=3",
-]
-# Only needed for the offline mode.
-local = [
-    "ollama>=0.6",
 ]
 ui = ["streamlit>=1.65"]
 dev = ["pytest>=9.1", "pyflakes>=3"]
