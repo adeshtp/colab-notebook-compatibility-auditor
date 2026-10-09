@@ -49,7 +49,7 @@ def build_markdown(result, evidence, explanation, status) -> str:
     add(f"- Notebook: `{FIXTURE}` (committed test fixture)")
     add(f"- Runtime snapshot: `{SNAPSHOT}`")
     add(f"- Provider: `{DEFAULT_PROVIDER}` / `{DEFAULT_MODEL}`")
-    add(f"- LLM calls: 1")
+    add("- LLM calls: 1")
     add(f"- Generated: {date.today().isoformat()}\n")
 
     add("## Notebook summary\n")
@@ -129,12 +129,12 @@ def main() -> int:
     evidence = collect_evidence(knowledge, result)
 
     explanation = None
-    status = "not attempted"
     try:
         explanation = explain(result, evidence)
         status = "one model call completed"
     except Exception as exc:
-        status = f"{type(exc).__name__}"
+        # Report the honest reason. The deterministic sections are still written.
+        status = f"{type(exc).__name__} (set GROQ_API_KEY for an explanation)"
 
     OUTPUT.write_text(
         build_markdown(result, evidence, explanation, status), encoding="utf-8"

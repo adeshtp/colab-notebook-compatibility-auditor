@@ -1,0 +1,56 @@
+name: tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.12 and 3.13 are the versions Agno 3.x declares support for and both
+        # have torch manylinux wheels. The project was developed on 3.14.
+        python-version: ["3.12", "3.13"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+          cache-dependency-path: pyproject.toml
+
+      # Dependencies come from the declared extras rather than requirements.txt.
+      # requirements.txt is the macOS-verified lockfile; the extras use ranges so
+      # CI is not pinned to one platform's wheel builds.
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install ".[llm,ui,dev]"
+
+      # No GROQ_API_KEY is set. The suite must pass without it: the deterministic
+      # audit, evidence retrieval and the degraded UI path all run keyless, and the
+      # one live model test is opt-in via RUN_OLLAMA_TESTS.
+      - name: Run test suite
+        env:
+          GROQ_API_KEY: ""
+        run: python -m pytest -q
+
+      - name: Lint
+        run: python -m pyflakes src app tests scripts
+
+      # The RAG tests download the sentence-transformers model from HuggingFace on
+      # first run, so the suite is not fully offline. Nothing else reaches the network.
+      - name: Confirm the knowledge base rebuilds from committed sources
+        run: |
+          PYTHONPATH=src python -c "
+          from knowledge_base import build_knowledge, load_sources
+          print('curated sources on disk:', len(load_sources()))
+          build_knowledge(rebuild=True)
+          print('LanceDB index rebuilt from committed sources')
+          "

@@ -135,18 +135,18 @@ Model prose only. It cannot change any field in the table above.
 
 **Summary**
 
-The notebook unpinned opendatasets and runs on a 2026.07 snapshot that does not list it. This may lead to unresolved package installs or version drift.
+The notebook installs opendatasets without a version pin and the selected runtime snapshot 2026.07 does not include this package. This may lead to unstable or missing dependencies.
 
 **Explanations**
 
-- R002: The notebook installs opendatasets without a version pin, so the runtime resolves to an unguaranteed version that may change.
-- R004: opendatasets is not listed in the selected runtime snapshot, so installing it at runtime may be required; snapshot data can lag a live runtime.
+- R002: The notebook installs opendatasets with no exact version pin; the runtime version it resolves to is not guaranteed to be stable.
+- R004: opendatasets is not listed in the selected runtime snapshot 2026.07; installing it at runtime may be required.
 
 **Recommended manual checks**
 
-- Check that opendatasets is installed after notebook execution.
-- Verify the resolved opendatasets version.
-- Confirm that the runtime snapshot includes all other required libraries.
+- Verify the version of opendatasets that gets installed.
+- Check that the installed opendatasets works with the current runtime libraries.
+- Confirm that the package is available in the runtime after installation.
 
 Rules not explained by the model: none
 
