@@ -1,3 +1,5 @@
+![tests](https://github.com/adeshtp/colab-notebook-compatibility-auditor/actions/workflows/tests.yml/badge.svg)
+
 # Colab Notebook Compatibility Auditor
 
 A Python tool that checks Google Colab notebooks for selected dependency and runtime
